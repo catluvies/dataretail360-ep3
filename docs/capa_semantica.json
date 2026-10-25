@@ -1,0 +1,194 @@
+{
+  "modelo": "DataRetail 360 · Ventas multicanal",
+  "version": "1.0",
+  "descripcion": "Capa semántica del modelo dimensional de ventas. Documenta tablas, columnas, sinónimos, métricas oficiales y jerarquías para que personas y asistentes de IA (NLQ / text-to-SQL) consulten con las mismas definiciones.",
+  "grano": "Una fila de fact_ventas representa una línea de producto de una boleta (tienda física) o de un pedido (sitio web o app).",
+  "vistas_de_consumo": ["vw_ventas", "vw_kpi_mensual", "agg_ventas_mes_region"],
+  "tablas": {
+    "fact_ventas": {
+      "tipo": "Hecho transaccional",
+      "descripcion": "Líneas vendidas en tiendas físicas y canales digitales. Las transacciones anuladas no se cargan; las devueltas se cargan con es_devolucion = 1.",
+      "columnas": {
+        "sk_venta": {"descripcion": "Clave sustituta de la línea de venta.", "tipo": "INTEGER", "rol": "PK"},
+        "sk_fecha": {"descripcion": "Fecha de la venta (FK a dim_fecha, formato AAAAMMDD).", "tipo": "INTEGER", "rol": "FK"},
+        "sk_cliente": {"descripcion": "Versión del cliente vigente en la fecha de la venta (FK a dim_cliente). -1 = cliente no identificado.", "tipo": "INTEGER", "rol": "FK"},
+        "sk_producto": {"descripcion": "Producto vendido (FK a dim_producto).", "tipo": "INTEGER", "rol": "FK"},
+        "sk_sucursal": {"descripcion": "Sucursal donde se registró la venta; las ventas digitales usan la sucursal virtual 'Tienda online'.", "tipo": "INTEGER", "rol": "FK"},
+        "sk_canal": {"descripcion": "Canal de venta (FK a dim_canal).", "tipo": "INTEGER", "rol": "FK"},
+        "fuente_origen": {"descripcion": "Sistema de origen: POS (tiendas) o ECOMMERCE (web y app).", "tipo": "TEXT", "rol": "Dimensión degenerada"},
+        "numero_documento": {"descripcion": "Número de boleta o de pedido.", "tipo": "TEXT", "rol": "Dimensión degenerada", "sinonimos": ["boleta", "pedido", "ticket", "transacción"]},
+        "nro_linea": {"descripcion": "Número de línea dentro del documento.", "tipo": "INTEGER", "rol": "Dimensión degenerada"},
+        "hora": {"descripcion": "Hora del día de la venta (0-23).", "tipo": "INTEGER", "rol": "Atributo"},
+        "cantidad": {"descripcion": "Unidades vendidas en la línea.", "tipo": "INTEGER", "rol": "Medida aditiva", "sinonimos": ["unidades"]},
+        "precio_unitario": {"descripcion": "Precio unitario de venta en pesos chilenos.", "tipo": "INTEGER", "rol": "Medida no aditiva"},
+        "monto_bruto": {"descripcion": "cantidad × precio_unitario, en pesos.", "tipo": "INTEGER", "rol": "Medida aditiva"},
+        "descuento": {"descripcion": "Descuento aplicado a la línea, en pesos.", "tipo": "INTEGER", "rol": "Medida aditiva"},
+        "monto_neto": {"descripcion": "monto_bruto − descuento, en pesos. Incluye líneas devueltas: para la venta neta oficial usar la métrica venta_neta.", "tipo": "INTEGER", "rol": "Medida aditiva"},
+        "es_devolucion": {"descripcion": "1 si la línea fue devuelta por el cliente.", "tipo": "INTEGER", "rol": "Indicador"},
+        "id_carga": {"descripcion": "Carga ETL que insertó la fila (linaje).", "tipo": "TEXT", "rol": "Auditoría"},
+        "archivo_origen": {"descripcion": "Archivo fuente del que proviene la fila (linaje).", "tipo": "TEXT", "rol": "Auditoría"},
+        "fila_origen": {"descripcion": "Fila del archivo fuente (linaje hasta Bronze).", "tipo": "INTEGER", "rol": "Auditoría"}
+      }
+    },
+    "dim_fecha": {
+      "tipo": "Dimensión conformada",
+      "descripcion": "Calendario diario con jerarquía año > semestre > trimestre > mes > día y feriados nacionales.",
+      "columnas": {
+        "sk_fecha": {"descripcion": "Clave AAAAMMDD.", "tipo": "INTEGER", "rol": "PK"},
+        "fecha": {"descripcion": "Fecha en formato ISO (AAAA-MM-DD).", "tipo": "TEXT", "rol": "Atributo", "sinonimos": ["día"]},
+        "dia": {"descripcion": "Día del mes.", "tipo": "INTEGER", "rol": "Atributo"},
+        "dia_semana": {"descripcion": "Día de la semana (1 = lunes … 7 = domingo).", "tipo": "INTEGER", "rol": "Atributo"},
+        "nombre_dia": {"descripcion": "Nombre del día en español.", "tipo": "TEXT", "rol": "Atributo"},
+        "semana_iso": {"descripcion": "Número de semana ISO.", "tipo": "INTEGER", "rol": "Atributo"},
+        "mes": {"descripcion": "Mes (1-12).", "tipo": "INTEGER", "rol": "Jerarquía tiempo"},
+        "nombre_mes": {"descripcion": "Nombre del mes en español.", "tipo": "TEXT", "rol": "Atributo"},
+        "anio_mes": {"descripcion": "Período mensual AAAA-MM.", "tipo": "TEXT", "rol": "Jerarquía tiempo", "sinonimos": ["período", "mes"]},
+        "trimestre": {"descripcion": "Trimestre (1-4).", "tipo": "INTEGER", "rol": "Jerarquía tiempo", "sinonimos": ["Q"]},
+        "semestre": {"descripcion": "Semestre (1-2).", "tipo": "INTEGER", "rol": "Jerarquía tiempo"},
+        "anio": {"descripcion": "Año calendario.", "tipo": "INTEGER", "rol": "Jerarquía tiempo", "sinonimos": ["año"]},
+        "es_fin_de_semana": {"descripcion": "1 si es sábado o domingo.", "tipo": "INTEGER", "rol": "Indicador"},
+        "es_festivo": {"descripcion": "1 si es feriado nacional.", "tipo": "INTEGER", "rol": "Indicador"},
+        "nombre_festivo": {"descripcion": "Nombre del feriado.", "tipo": "TEXT", "rol": "Atributo"}
+      }
+    },
+    "dim_canal": {
+      "tipo": "Dimensión conformada",
+      "descripcion": "Canal por el que se realizó la venta.",
+      "columnas": {
+        "sk_canal": {"descripcion": "Clave sustituta.", "tipo": "INTEGER", "rol": "PK"},
+        "cod_canal": {"descripcion": "Código del canal: TIENDA, WEB, APP.", "tipo": "TEXT", "rol": "Clave de negocio"},
+        "nombre_canal": {"descripcion": "Tienda física, Sitio web o App móvil.", "tipo": "TEXT", "rol": "Atributo", "sinonimos": ["canal", "canal de venta"]},
+        "tipo_canal": {"descripcion": "Presencial o Digital.", "tipo": "TEXT", "rol": "Jerarquía canal", "sinonimos": ["online", "físico"]}
+      }
+    },
+    "dim_sucursal": {
+      "tipo": "Dimensión conformada y espacial · SCD tipo 1",
+      "descripcion": "Sucursales con su ubicación geográfica. Jerarquía zona > región > comuna > sucursal. Las correcciones sobrescriben el valor (sin historia).",
+      "columnas": {
+        "sk_sucursal": {"descripcion": "Clave sustituta.", "tipo": "INTEGER", "rol": "PK"},
+        "cod_sucursal": {"descripcion": "Código de la sucursal (SUC-01 …). SUC-99 = Tienda online.", "tipo": "TEXT", "rol": "Clave de negocio"},
+        "nombre_sucursal": {"descripcion": "Nombre comercial de la sucursal.", "tipo": "TEXT", "rol": "Atributo", "sinonimos": ["tienda", "local"]},
+        "tipo_sucursal": {"descripcion": "Tienda calle, Mall o Virtual.", "tipo": "TEXT", "rol": "Atributo"},
+        "direccion": {"descripcion": "Dirección postal.", "tipo": "TEXT", "rol": "Atributo SCD1"},
+        "comuna": {"descripcion": "Comuna de la sucursal.", "tipo": "TEXT", "rol": "Jerarquía geográfica"},
+        "region": {"descripcion": "Región de la sucursal. 'Canal online' para la tienda virtual.", "tipo": "TEXT", "rol": "Jerarquía geográfica", "sinonimos": ["región"]},
+        "zona": {"descripcion": "Macrozona: Norte, Centro, Sur, Austral u Online.", "tipo": "TEXT", "rol": "Jerarquía geográfica"},
+        "pais": {"descripcion": "País.", "tipo": "TEXT", "rol": "Jerarquía geográfica"},
+        "latitud": {"descripcion": "Latitud (WGS84) para mapas.", "tipo": "REAL", "rol": "Atributo espacial"},
+        "longitud": {"descripcion": "Longitud (WGS84) para mapas.", "tipo": "REAL", "rol": "Atributo espacial"},
+        "fecha_apertura": {"descripcion": "Fecha de apertura.", "tipo": "TEXT", "rol": "Atributo"},
+        "fecha_actualizacion": {"descripcion": "Última vez que la fila cambió.", "tipo": "TEXT", "rol": "Auditoría"},
+        "id_carga": {"descripcion": "Carga que insertó o actualizó la fila.", "tipo": "TEXT", "rol": "Auditoría"}
+      }
+    },
+    "dim_producto": {
+      "tipo": "Dimensión conformada · SCD tipo 1 y tipo 3",
+      "descripcion": "Maestro de productos homologado entre ERP y e-commerce. Jerarquía categoría > subcategoría > producto. La categoría es SCD tipo 3: se guarda la categoría anterior para comparar antes y después de una reclasificación.",
+      "columnas": {
+        "sk_producto": {"descripcion": "Clave sustituta.", "tipo": "INTEGER", "rol": "PK"},
+        "cod_producto": {"descripcion": "Código del producto en el ERP.", "tipo": "TEXT", "rol": "Clave de negocio", "sinonimos": ["SKU"]},
+        "sku_web": {"descripcion": "Código del producto en el e-commerce (tabla de equivalencias).", "tipo": "TEXT", "rol": "Atributo SCD1"},
+        "nombre_producto": {"descripcion": "Nombre comercial.", "tipo": "TEXT", "rol": "Atributo SCD1", "sinonimos": ["producto", "artículo"]},
+        "marca": {"descripcion": "Marca del producto.", "tipo": "TEXT", "rol": "Atributo SCD1"},
+        "linea": {"descripcion": "Línea de precio: Básica, Estándar o Premium.", "tipo": "TEXT", "rol": "Atributo SCD1"},
+        "subcategoria": {"descripcion": "Subcategoría.", "tipo": "TEXT", "rol": "Jerarquía producto"},
+        "categoria": {"descripcion": "Categoría vigente: Tecnología, Hogar o Accesorios.", "tipo": "TEXT", "rol": "Jerarquía producto · SCD3", "sinonimos": ["rubro", "familia"]},
+        "categoria_anterior": {"descripcion": "Categoría previa a la última reclasificación (SCD tipo 3).", "tipo": "TEXT", "rol": "SCD3"},
+        "fecha_cambio_categoria": {"descripcion": "Fecha en que se registró la reclasificación.", "tipo": "TEXT", "rol": "SCD3"},
+        "precio_lista": {"descripcion": "Precio de lista vigente, en pesos.", "tipo": "INTEGER", "rol": "Atributo SCD1"},
+        "fecha_actualizacion": {"descripcion": "Última vez que la fila cambió.", "tipo": "TEXT", "rol": "Auditoría"},
+        "id_carga": {"descripcion": "Carga que insertó o actualizó la fila.", "tipo": "TEXT", "rol": "Auditoría"}
+      }
+    },
+    "dim_cliente": {
+      "tipo": "Dimensión conformada · SCD tipo 2",
+      "descripcion": "Clientes identificados, seudonimizados. Cada cambio de comuna/región o de segmento crea una nueva versión con su vigencia, para que las ventas pasadas conserven la región y el segmento que el cliente tenía al comprar.",
+      "columnas": {
+        "sk_cliente": {"descripcion": "Clave sustituta de la versión. -1 = cliente no identificado.", "tipo": "INTEGER", "rol": "PK"},
+        "id_cliente": {"descripcion": "Seudónimo estable del RUT (SHA-256 con sal secreta). No permite recuperar el RUT.", "tipo": "TEXT", "rol": "Clave de negocio"},
+        "comuna": {"descripcion": "Comuna de residencia en la versión.", "tipo": "TEXT", "rol": "Atributo SCD2"},
+        "region": {"descripcion": "Región de residencia en la versión.", "tipo": "TEXT", "rol": "Atributo SCD2", "sinonimos": ["región del cliente"]},
+        "zona": {"descripcion": "Macrozona de residencia en la versión.", "tipo": "TEXT", "rol": "Atributo SCD2"},
+        "segmento": {"descripcion": "Segmento comercial: Nuevo, Ocasional, Frecuente o VIP.", "tipo": "TEXT", "rol": "Atributo SCD2"},
+        "fecha_registro": {"descripcion": "Fecha de registro en el CRM.", "tipo": "TEXT", "rol": "Atributo SCD1"},
+        "fecha_inicio_vigencia": {"descripcion": "Desde cuándo rige la versión.", "tipo": "TEXT", "rol": "SCD2"},
+        "fecha_fin_vigencia": {"descripcion": "Hasta cuándo rige la versión; 9999-12-31 = vigente.", "tipo": "TEXT", "rol": "SCD2"},
+        "es_actual": {"descripcion": "1 si es la versión vigente.", "tipo": "INTEGER", "rol": "SCD2"},
+        "version": {"descripcion": "Número correlativo de versión del cliente.", "tipo": "INTEGER", "rol": "SCD2"},
+        "id_carga": {"descripcion": "Carga que insertó la versión.", "tipo": "TEXT", "rol": "Auditoría"}
+      }
+    }
+  },
+  "metricas": {
+    "venta_neta": {
+      "descripcion": "Venta neta oficial: monto neto de las líneas no devueltas. Las anuladas no llegan a Gold.",
+      "sql": "SUM(venta_neta)",
+      "fuente": "vw_ventas",
+      "sinonimos": ["ventas", "venta neta", "ingresos", "facturación"]
+    },
+    "monto_devuelto": {
+      "descripcion": "Monto neto de las líneas devueltas.",
+      "sql": "SUM(monto_devuelto)",
+      "fuente": "vw_ventas",
+      "sinonimos": ["devoluciones"]
+    },
+    "tasa_devolucion": {
+      "descripcion": "Proporción del monto vendido que fue devuelto.",
+      "sql": "SUM(monto_devuelto) * 1.0 / NULLIF(SUM(venta_neta) + SUM(monto_devuelto), 0)",
+      "fuente": "vw_ventas"
+    },
+    "unidades_vendidas": {
+      "descripcion": "Unidades de líneas no devueltas.",
+      "sql": "SUM(CASE WHEN es_devolucion = 0 THEN unidades ELSE 0 END)",
+      "fuente": "vw_ventas",
+      "sinonimos": ["unidades", "cantidad vendida"]
+    },
+    "documentos": {
+      "descripcion": "Número de boletas o pedidos con venta efectiva.",
+      "sql": "COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END)",
+      "fuente": "vw_ventas",
+      "sinonimos": ["transacciones", "boletas", "pedidos"]
+    },
+    "ticket_promedio": {
+      "descripcion": "Venta neta dividida por el número de documentos con venta efectiva.",
+      "sql": "SUM(venta_neta) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END), 0)",
+      "fuente": "vw_ventas",
+      "sinonimos": ["ticket medio", "valor promedio por compra"]
+    },
+    "clientes_activos": {
+      "descripcion": "Clientes identificados con al menos una compra no devuelta en el período.",
+      "sql": "COUNT(DISTINCT CASE WHEN es_cliente_anonimo = 0 AND es_devolucion = 0 THEN id_cliente END)",
+      "fuente": "vw_ventas",
+      "sinonimos": ["clientes que compraron"]
+    }
+  },
+  "jerarquias": {
+    "tiempo": ["anio", "semestre", "trimestre", "anio_mes", "fecha"],
+    "geografia_sucursal": ["zona_sucursal", "region_sucursal", "comuna_sucursal", "sucursal"],
+    "producto": ["categoria", "subcategoria", "producto"],
+    "canal": ["tipo_canal", "canal"]
+  },
+  "reglas_para_ia": [
+    "Consultar solo vw_ventas, vw_kpi_mensual o agg_ventas_mes_region; nunca las capas Bronze o Silver.",
+    "La venta neta se calcula con la métrica venta_neta, no con monto_bruto ni monto_neto.",
+    "Para analizar dónde se vende usar region_sucursal; region_cliente indica dónde vivía el cliente al comprar (SCD tipo 2).",
+    "Las ventas digitales tienen region_sucursal = 'Canal online'.",
+    "Excluir es_cliente_anonimo = 1 al contar clientes.",
+    "Los nombres de canal válidos son 'Tienda física', 'Sitio web' y 'App móvil'.",
+    "Toda respuesta generada debe pasar por el checklist de validación humana antes de comunicarse."
+  ],
+  "ejemplos_nlq": [
+    {
+      "pregunta": "¿Cuál fue la venta neta de la app en marzo de 2026?",
+      "sql": "SELECT SUM(venta_neta) AS venta_neta FROM vw_ventas WHERE canal = 'App móvil' AND anio_mes = '2026-03'"
+    },
+    {
+      "pregunta": "¿Qué región tuvo el mayor ticket promedio en tiendas físicas durante 2025?",
+      "sql": "SELECT region_sucursal, SUM(venta_neta) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END), 0) AS ticket_promedio FROM vw_ventas WHERE canal = 'Tienda física' AND anio = 2025 GROUP BY region_sucursal ORDER BY ticket_promedio DESC LIMIT 1"
+    },
+    {
+      "pregunta": "¿Cuántos clientes VIP compraron en el primer semestre de 2026?",
+      "sql": "SELECT COUNT(DISTINCT id_cliente) FROM vw_ventas WHERE segmento_cliente = 'VIP' AND anio = 2026 AND semestre = 1 AND es_cliente_anonimo = 0 AND es_devolucion = 0"
+    }
+  ]
+}
