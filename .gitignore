@@ -1,0 +1,19 @@
+# Entorno
+.venv/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Secretos: nunca se suben al repositorio
+.env
+
+# Datos generados por el pipeline (se reconstruyen con los scripts)
+data/fuentes/
+data/bronze/
+data/silver/
+data/gold/
+
+# Logs de ejecución
+logs/*.log
+
+.DS_Store
