@@ -88,18 +88,25 @@ def ejecutar(con, silver, id_carga: str, log) -> list[dict]:
            OR s.sk_sucursal IS NULL OR ca.sk_canal IS NULL""")
     chequear("V02 Integridad referencial del hecho", huerfanas == 0, f"{huerfanas} filas huérfanas")
 
-    sin_unica_vigente = _escalar(con, """
-        SELECT COUNT(*) FROM (SELECT id_cliente FROM dim_cliente
-                              GROUP BY id_cliente HAVING SUM(es_actual) <> 1)""")
-    chequear("V03 SCD2: exactamente una versión vigente por cliente", sin_unica_vigente == 0,
-             f"{sin_unica_vigente} clientes con 0 o más de 1 versión vigente")
+    # Un cliente dado de baja en el CRM queda sin versión vigente; nunca puede tener más de una.
+    varias_vigentes, de_baja = con.execute(text("""
+        SELECT COALESCE(SUM(vigentes > 1), 0), COALESCE(SUM(vigentes = 0), 0)
+        FROM (SELECT SUM(es_actual) AS vigentes FROM dim_cliente GROUP BY id_cliente)""")).one()
+    mal_marcadas = _escalar(con, """
+        SELECT COUNT(*) FROM dim_cliente WHERE es_actual <> (fecha_fin_vigencia = '9999-12-31')""")
+    chequear("V03 SCD2: una sola versión vigente por cliente (ninguna si está de baja)",
+             varias_vigentes == 0 and mal_marcadas == 0,
+             f"{varias_vigentes} clientes con más de 1 versión vigente; {mal_marcadas} versiones con la marca "
+             f"de vigencia inconsistente; {de_baja} clientes de baja")
 
     traslapes = _escalar(con, """
         SELECT COUNT(*) FROM dim_cliente a JOIN dim_cliente b
           ON a.id_cliente = b.id_cliente AND a.sk_cliente < b.sk_cliente
          AND a.fecha_inicio_vigencia <= b.fecha_fin_vigencia
          AND b.fecha_inicio_vigencia <= a.fecha_fin_vigencia""")
-    chequear("V04 SCD2: vigencias sin traslape", traslapes == 0, f"{traslapes} pares de versiones traslapadas")
+    invertidas = _escalar(con, "SELECT COUNT(*) FROM dim_cliente WHERE fecha_inicio_vigencia > fecha_fin_vigencia")
+    chequear("V04 SCD2: vigencias sin traslape ni fechas invertidas", traslapes == 0 and invertidas == 0,
+             f"{traslapes} pares de versiones traslapadas; {invertidas} versiones que terminan antes de empezar")
 
     mal_asignadas = _escalar(con, """
         SELECT COUNT(*) FROM fact_ventas f
