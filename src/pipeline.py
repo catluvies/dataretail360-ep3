@@ -58,8 +58,10 @@ def ejecutar(lote: int, reiniciar: bool = False) -> dict:
         gold.registrar_fin(engine, id_carga, "FALLIDA", _ahora(), conteos, f"{type(exc).__name__}: {exc}"[:500])
         raise
     gold.registrar_fin(engine, id_carga, "EXITOSA", _ahora(), conteos)
-    log.info("===== Fin carga %s: EXITOSA (%d líneas nuevas en fact_ventas, %d ya existían) =====",
-             id_carga, conteos["fact_insertadas"], conteos["fact_omitidas"])
+    log.info("===== Fin carga %s: EXITOSA (%d líneas nuevas en fact_ventas, %d ya existían; "
+             "%d filas nuevas en fact_inventario, %d ya existían) =====",
+             id_carga, conteos["fact_insertadas"], conteos["fact_omitidas"],
+             conteos["fact_inventario_insertadas"], conteos["fact_inventario_omitidas"])
     engine.dispose()
     return {"id_carga": id_carga, **conteos}
 

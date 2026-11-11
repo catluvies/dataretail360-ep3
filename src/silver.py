@@ -3,7 +3,8 @@
 Aplica las reglas del diagnóstico de calidad de la EP1. Cada fila que no pasa
 una regla va a la tabla de rechazos con su código y motivo; las filas que se
 descartan por regla de negocio (duplicados, transacciones anuladas) quedan
-como EXCLUSION. Así se cumple: filas leídas = válidas + rechazadas + excluidas.
+como EXCLUSION. Así se cumple, en ventas y en inventario:
+filas leídas = válidas + rechazadas + excluidas.
 """
 import json
 from dataclasses import dataclass, field
@@ -63,6 +64,7 @@ class ResultadoSilver:
     productos: pd.DataFrame
     sucursales: pd.DataFrame
     ventas: pd.DataFrame
+    inventario: pd.DataFrame
     rechazos: pd.DataFrame
     conteos: dict = field(default_factory=dict)
 
@@ -322,6 +324,56 @@ def _ventas_web(pedidos, sucursales, productos, clientes, rechazos) -> tuple[pd.
     return _salida_ventas(df, "ECOMMERCE", "pedido_id"), no_identificados
 
 
+# --------------------------------------------------------------- inventario
+def _inventario(inv: pd.DataFrame, sucursales: pd.DataFrame, productos: pd.DataFrame,
+                rechazos: RegistroRechazos) -> pd.DataFrame:
+    """Foto diaria del stock: una fila por producto, sucursal y día."""
+    origen = config.CONTRATOS["inventario_diario"]
+    df = inv.copy()
+    df["_clave"] = df["fecha"] + "#" + df["cod_sucursal"] + "#" + df["cod_producto"]
+    duplicado = df.duplicated(subset=origen, keep="first")
+    rechazos.agregar(df[duplicado], "inventario", "INV-01", "Registro duplicado (doble exportación)",
+                     "_clave", origen, tipo="EXCLUSION")
+    df = df[~duplicado].copy()
+
+    df["fecha_dt"] = rc.parsear_fecha(df["fecha"], rc.FORMATOS_FECHA_DIA)
+    df["cod_suc"] = rc.normalizar_texto(df["cod_sucursal"]).str.upper()
+    codigo = rc.normalizar_texto(df["cod_producto"]).str.upper()
+    # La bodega online informa con el SKU web: se homologa al código ERP con la tabla de equivalencias.
+    df["es_sku_web"] = codigo.str.match(rc.PATRON_SKU_WEB).fillna(False).astype(bool)
+    homologacion = productos.dropna(subset=["sku_web"]).set_index("sku_web")["cod_producto"]
+    df["cod_prod"] = codigo.where(~df["es_sku_web"], codigo.map(homologacion))
+    for columna in ["stock_cierre", "unidades_recibidas", "unidades_vendidas", "stock_minimo"]:
+        df[f"{columna}_n"] = pd.to_numeric(df[columna], errors="coerce")
+
+    cod_sucursales, cod_productos = set(sucursales["cod_sucursal"]), set(productos["cod_producto"])
+    df = _aplicar_reglas(df, [
+        ("INV-02", "Fecha inválida o con formato no reconocido", lambda d: d["fecha_dt"].isna()),
+        ("INV-03", "Sucursal sin código o inexistente en el maestro", lambda d: ~d["cod_suc"].isin(cod_sucursales)),
+        ("INV-04", "Producto de la bodega online sin homologar (SKU sin equivalencia en el maestro)",
+         lambda d: d["es_sku_web"] & d["cod_prod"].isna()),
+        ("INV-05", "Producto inexistente en el maestro", lambda d: ~d["cod_prod"].isin(cod_productos)),
+        ("INV-06", "Stock de cierre negativo o ilegible (inventario desactualizado)",
+         lambda d: ~(d["stock_cierre_n"] >= 0)),
+        ("INV-07", "Unidades recibidas, vendidas o stock mínimo negativos o ilegibles",
+         lambda d: ~((d["unidades_recibidas_n"] >= 0) & (d["unidades_vendidas_n"] >= 0)
+                     & (d["stock_minimo_n"] >= 0))),
+    ], rechazos, "inventario", "_clave", origen)
+
+    # Grano: un registro por producto, sucursal y día. Si llegan dos, gana el último exportado.
+    repetido = df.duplicated(["fecha_dt", "cod_suc", "cod_prod"], keep="last")
+    rechazos.agregar(df[repetido], "inventario", "INV-08",
+                     "Más de un registro para el mismo producto, sucursal y día: se conserva el último",
+                     "_clave", origen, tipo="EXCLUSION")
+    df = df[~repetido]
+    return pd.DataFrame({
+        "fecha": df["fecha_dt"], "cod_sucursal": df["cod_suc"], "cod_producto": df["cod_prod"],
+        **{c: df[f"{c}_n"].astype("int64")
+           for c in ["stock_cierre", "unidades_recibidas", "unidades_vendidas", "stock_minimo"]},
+        "_id_carga": df["_id_carga"], "_archivo": df["_archivo"], "_fila_origen": df["_fila_origen"],
+    }).reset_index(drop=True)
+
+
 # ------------------------------------------------------------------ escritura
 def _escribir(df: pd.DataFrame, entidad: str, lote: int) -> None:
     destino = config.SILVER / entidad
@@ -329,13 +381,13 @@ def _escribir(df: pd.DataFrame, entidad: str, lote: int) -> None:
     df.to_parquet(destino / f"lote={lote}.parquet", index=False)
 
 
-def _escribir_ventas_particionadas(ventas: pd.DataFrame, lote: int) -> None:
+def _escribir_particionado(df: pd.DataFrame, entidad: str, columna_fecha: str, lote: int) -> None:
     """Particiona por año y mes: una consulta por período lee solo su carpeta."""
-    base = config.SILVER / "ventas"
+    base = config.SILVER / entidad
     for previo in base.glob(f"anio=*/mes=*/lote{lote}-*.parquet"):
         previo.unlink()  # re-ejecutar el lote reemplaza sus archivos (idempotencia)
-    tabla = pa.Table.from_pandas(ventas.assign(
-        anio=ventas["fecha_hora"].dt.strftime("%Y"), mes=ventas["fecha_hora"].dt.strftime("%m")),
+    tabla = pa.Table.from_pandas(df.assign(
+        anio=df[columna_fecha].dt.strftime("%Y"), mes=df[columna_fecha].dt.strftime("%m")),
         preserve_index=False)
     pq.write_to_dataset(tabla, base, partition_cols=["anio", "mes"],
                         basename_template=f"lote{lote}-{{i}}.parquet",
@@ -355,13 +407,16 @@ def transformar(bronze: dict[str, pd.DataFrame], lote: int, id_carga: str, log) 
     ventas_web, web_sin_cliente = _ventas_web(bronze["ecommerce_pedidos"], sucursales, productos,
                                               clientes, rechazos)
     ventas = pd.concat([ventas_pos, ventas_web], ignore_index=True)
+    inventario = _inventario(bronze["inventario_diario"], sucursales, productos, rechazos)
     tabla_rechazos = rechazos.como_df()
 
     for entidad, df in {"clientes": clientes, "productos": productos, "sucursales": sucursales,
                         "rechazos": tabla_rechazos}.items():
         _escribir(df, entidad, lote)
-    _escribir_ventas_particionadas(ventas, lote)
+    _escribir_particionado(ventas, "ventas", "fecha_hora", lote)
+    _escribir_particionado(inventario, "inventario", "fecha", lote)
 
+    de_inventario = tabla_rechazos[tabla_rechazos["entidad"] == "inventario"]
     de_ventas = tabla_rechazos[tabla_rechazos["entidad"] == "venta"]
     conteos = {
         "lineas_leidas": lineas_pos + lineas_web,
@@ -372,6 +427,10 @@ def transformar(bronze: dict[str, pd.DataFrame], lote: int, id_carga: str, log) 
         "clientes_validos": len(clientes),
         "ventas_pos_rut_sin_match": rut_no_encontrado,
         "ventas_web_sin_cliente": web_sin_cliente,
+        "inv_filas_leidas": len(bronze["inventario_diario"]),
+        "inv_filas_validas": len(inventario),
+        "inv_filas_rechazadas": int((de_inventario["tipo"] == "RECHAZO").sum()),
+        "inv_filas_excluidas": int((de_inventario["tipo"] == "EXCLUSION").sum()),
         **avisos,
     }
     for (tipo, regla, motivo), n in tabla_rechazos.groupby(["tipo", "regla", "motivo"]).size().items():
@@ -379,6 +438,10 @@ def transformar(bronze: dict[str, pd.DataFrame], lote: int, id_carga: str, log) 
     log.info("Silver | ventas: %d leídas = %d válidas + %d rechazadas + %d excluidas",
              conteos["lineas_leidas"], conteos["lineas_validas"],
              conteos["lineas_rechazadas"], conteos["lineas_excluidas"])
+    log.info("Silver | inventario: %d leídas = %d válidas + %d rechazadas + %d excluidas",
+             conteos["inv_filas_leidas"], conteos["inv_filas_validas"],
+             conteos["inv_filas_rechazadas"], conteos["inv_filas_excluidas"])
     log.info("Silver | clientes: %d registros CRM -> %d clientes únicos | avisos: %s",
              conteos["clientes_leidos"], conteos["clientes_validos"], avisos)
-    return ResultadoSilver(lote, clientes, productos, sucursales, ventas, tabla_rechazos, conteos)
+    return ResultadoSilver(lote=lote, clientes=clientes, productos=productos, sucursales=sucursales,
+                           ventas=ventas, inventario=inventario, rechazos=tabla_rechazos, conteos=conteos)

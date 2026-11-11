@@ -1,12 +1,13 @@
 {
-  "modelo": "DataRetail 360 · Ventas multicanal",
-  "version": "1.0",
-  "descripcion": "Capa semántica del modelo dimensional de ventas. Documenta tablas, columnas, sinónimos, métricas oficiales y jerarquías para que personas y asistentes de IA (NLQ / text-to-SQL) consulten con las mismas definiciones.",
-  "grano": "Una fila de fact_ventas representa una línea de producto de una boleta (tienda física) o de un pedido (sitio web o app).",
-  "vistas_de_consumo": ["vw_ventas", "vw_kpi_mensual", "agg_ventas_mes_region"],
+  "modelo": "DataRetail 360 · Ventas multicanal e Inventario",
+  "version": "1.1",
+  "descripcion": "Capa semántica del modelo dimensional de ventas e inventario. Documenta tablas, columnas, sinónimos, métricas oficiales y jerarquías para que personas y asistentes de IA (NLQ / text-to-SQL) consulten con las mismas definiciones.",
+  "vistas_de_consumo": ["vw_ventas", "vw_kpi_mensual", "agg_ventas_mes_region",
+                        "vw_inventario", "vw_kpi_inventario_mensual", "agg_inventario_mes"],
   "tablas": {
     "fact_ventas": {
       "tipo": "Hecho transaccional",
+      "grano": "Una fila de fact_ventas representa una línea de producto de una boleta (tienda física) o de un pedido (sitio web o app).",
       "descripcion": "Líneas vendidas en tiendas físicas y canales digitales. Las transacciones anuladas no se cargan; las devueltas se cargan con es_devolucion = 1.",
       "columnas": {
         "sk_venta": {"descripcion": "Clave sustituta de la línea de venta.", "tipo": "INTEGER", "rol": "PK"},
@@ -25,6 +26,25 @@
         "descuento": {"descripcion": "Descuento aplicado a la línea, en pesos.", "tipo": "INTEGER", "rol": "Medida aditiva"},
         "monto_neto": {"descripcion": "monto_bruto − descuento, en pesos. Incluye líneas devueltas: para la venta neta oficial usar la métrica venta_neta.", "tipo": "INTEGER", "rol": "Medida aditiva"},
         "es_devolucion": {"descripcion": "1 si la línea fue devuelta por el cliente.", "tipo": "INTEGER", "rol": "Indicador"},
+        "id_carga": {"descripcion": "Carga ETL que insertó la fila (linaje).", "tipo": "TEXT", "rol": "Auditoría"},
+        "archivo_origen": {"descripcion": "Archivo fuente del que proviene la fila (linaje).", "tipo": "TEXT", "rol": "Auditoría"},
+        "fila_origen": {"descripcion": "Fila del archivo fuente (linaje hasta Bronze).", "tipo": "INTEGER", "rol": "Auditoría"}
+      }
+    },
+    "fact_inventario": {
+      "tipo": "Hecho snapshot periódico (diario)",
+      "grano": "Una fila de fact_inventario representa el stock de un producto, en una sucursal, al cierre de un día.",
+      "descripcion": "Foto diaria del stock que informa el sistema de inventario de operaciones. Reutiliza las dimensiones conformadas fecha, producto y sucursal de Ventas. La bodega online corresponde a la sucursal virtual 'Tienda online'.",
+      "columnas": {
+        "sk_inventario": {"descripcion": "Clave sustituta del registro de inventario.", "tipo": "INTEGER", "rol": "PK"},
+        "sk_fecha": {"descripcion": "Día de la foto del stock (FK a dim_fecha, formato AAAAMMDD).", "tipo": "INTEGER", "rol": "FK"},
+        "sk_producto": {"descripcion": "Producto (FK a dim_producto).", "tipo": "INTEGER", "rol": "FK"},
+        "sk_sucursal": {"descripcion": "Sucursal o bodega (FK a dim_sucursal).", "tipo": "INTEGER", "rol": "FK"},
+        "stock_cierre": {"descripcion": "Unidades disponibles al cierre del día. Se suma entre productos y sucursales, nunca entre días: para un período se usa el último día.", "tipo": "INTEGER", "rol": "Medida semiaditiva", "sinonimos": ["stock", "existencias", "inventario disponible"]},
+        "unidades_recibidas": {"descripcion": "Unidades que llegaron ese día por reposición o traspaso.", "tipo": "INTEGER", "rol": "Medida aditiva", "sinonimos": ["reposición", "recepciones"]},
+        "unidades_vendidas": {"descripcion": "Unidades que salieron ese día por venta (incluye las que después se devolvieron). Debe cuadrar con fact_ventas.", "tipo": "INTEGER", "rol": "Medida aditiva", "sinonimos": ["salidas", "despachos"]},
+        "stock_minimo": {"descripcion": "Punto de reorden: con este stock o menos se pide reposición.", "tipo": "INTEGER", "rol": "Medida no aditiva", "sinonimos": ["punto de reorden"]},
+        "es_quiebre": {"descripcion": "1 si el stock de cierre es 0 (quiebre de stock).", "tipo": "INTEGER", "rol": "Indicador", "sinonimos": ["quiebre", "sin stock", "agotado"]},
         "id_carga": {"descripcion": "Carga ETL que insertó la fila (linaje).", "tipo": "TEXT", "rol": "Auditoría"},
         "archivo_origen": {"descripcion": "Archivo fuente del que proviene la fila (linaje).", "tipo": "TEXT", "rol": "Auditoría"},
         "fila_origen": {"descripcion": "Fila del archivo fuente (linaje hasta Bronze).", "tipo": "INTEGER", "rol": "Auditoría"}
@@ -160,6 +180,18 @@
       "sql": "COUNT(DISTINCT CASE WHEN es_cliente_anonimo = 0 AND es_devolucion = 0 THEN id_cliente END)",
       "fuente": "vw_ventas",
       "sinonimos": ["clientes que compraron"]
+    },
+    "tasa_quiebre": {
+      "descripcion": "Porcentaje de días-producto-sucursal que cerraron con stock 0 (KPI K3).",
+      "sql": "100.0 * SUM(es_quiebre) / NULLIF(COUNT(*), 0)",
+      "fuente": "vw_inventario",
+      "sinonimos": ["quiebre de stock", "tasa de quiebre", "agotados", "falta de stock"]
+    },
+    "dias_cobertura": {
+      "descripcion": "Días que alcanza el stock del último día del período al ritmo de venta de los últimos 28 días (KPI K4). Bajo 7 hay riesgo de quiebre; sobre 60, baja rotación.",
+      "sql": "SUM(stock_cierre_mes) * 28.0 / NULLIF(SUM(unidades_vendidas_28d), 0)",
+      "fuente": "agg_inventario_mes",
+      "sinonimos": ["cobertura", "días de inventario", "días de stock"]
     }
   },
   "jerarquias": {
@@ -175,6 +207,8 @@
     "Las ventas digitales tienen region_sucursal = 'Canal online'.",
     "Excluir es_cliente_anonimo = 1 al contar clientes.",
     "Los nombres de canal válidos son 'Tienda física', 'Sitio web' y 'App móvil'.",
+    "Para inventario consultar vw_inventario, vw_kpi_inventario_mensual o agg_inventario_mes.",
+    "stock_cierre es semiaditiva: nunca sumarla entre días; para un período usar el último día (stock_cierre_mes).",
     "Toda respuesta generada debe pasar por el checklist de validación humana antes de comunicarse."
   ],
   "ejemplos_nlq": [
@@ -189,6 +223,10 @@
     {
       "pregunta": "¿Cuántos clientes VIP compraron en el primer semestre de 2026?",
       "sql": "SELECT COUNT(DISTINCT id_cliente) FROM vw_ventas WHERE segmento_cliente = 'VIP' AND anio = 2026 AND semestre = 1 AND es_cliente_anonimo = 0 AND es_devolucion = 0"
+    },
+    {
+      "pregunta": "¿Qué sucursal tuvo la mayor tasa de quiebre de stock en el primer semestre de 2026?",
+      "sql": "SELECT sucursal, ROUND(100.0 * SUM(es_quiebre) / COUNT(*), 2) AS tasa_quiebre FROM vw_inventario WHERE anio = 2026 AND semestre = 1 GROUP BY sucursal ORDER BY tasa_quiebre DESC LIMIT 1"
     }
   ]
 }

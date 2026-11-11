@@ -1,14 +1,15 @@
-"""Capa Gold: esquema estrella del proceso Ventas en el almacenamiento analítico.
+"""Capa Gold: constelación de hechos Ventas e Inventario en el almacenamiento analítico.
 
-Orden de carga: primero las dimensiones, después el hecho, porque
+Orden de carga: primero las dimensiones, después los hechos, porque
 una fila de hechos no puede apuntar a una dimensión que aún no existe.
 
-    dim_fecha     generada (calendario con feriados)
-    dim_canal     catálogo fijo
-    dim_sucursal  SCD tipo 1
-    dim_producto  SCD tipo 1 + SCD tipo 3 (categoría)
-    dim_cliente   SCD tipo 2 (comuna/región/zona y segmento)
-    fact_ventas   transaccional, carga incremental e idempotente
+    dim_fecha        generada (calendario con feriados)
+    dim_canal        catálogo fijo
+    dim_sucursal     SCD tipo 1
+    dim_producto     SCD tipo 1 + SCD tipo 3 (categoría)
+    dim_cliente      SCD tipo 2 (comuna/región/zona y segmento)
+    fact_ventas      transaccional, carga incremental e idempotente
+    fact_inventario  snapshot periódico diario, carga incremental e idempotente
 """
 import subprocess
 from datetime import date, timedelta
@@ -66,11 +67,25 @@ def _sentencias(ruta) -> list[str]:
     return sentencias
 
 
+COLUMNAS_CONTROL_INVENTARIO = ["inv_filas_leidas", "inv_filas_validas", "inv_filas_rechazadas",
+                               "inv_filas_excluidas", "filas_insertadas_fact_inventario"]
+
+
+def _migrar_control(con) -> None:
+    """Un Gold creado antes de agregar inventario recibe las columnas nuevas de control."""
+    existentes = {fila[1] for fila in con.execute(text("PRAGMA table_info(etl_control_cargas)"))}
+    for columna in COLUMNAS_CONTROL_INVENTARIO:
+        if columna not in existentes:
+            con.execute(text(f"ALTER TABLE etl_control_cargas ADD COLUMN {columna} INTEGER"))
+
+
 def crear_esquema(engine) -> None:
     with engine.begin() as con:
-        for archivo in ("ddl_gold.sql", "vistas_semanticas.sql"):
-            for sentencia in _sentencias(config.SQL / archivo):
-                con.execute(text(sentencia))
+        for sentencia in _sentencias(config.SQL / "ddl_gold.sql"):
+            con.execute(text(sentencia))
+        _migrar_control(con)
+        for sentencia in _sentencias(config.SQL / "vistas_semanticas.sql"):
+            con.execute(text(sentencia))
         con.execute(text("INSERT OR IGNORE INTO dim_canal VALUES (:sk, :cod, :nombre, :tipo)"),
                     [dict(zip(["sk", "cod", "nombre", "tipo"], c)) for c in CANALES])
 
@@ -111,12 +126,18 @@ def registrar_fin(engine, id_carga: str, estado: str, fin: str, conteos: dict | 
                    lineas_leidas = :leidas, lineas_validas = :validas,
                    lineas_rechazadas = :rechazadas, lineas_excluidas = :excluidas,
                    filas_insertadas_fact = :insertadas, filas_omitidas_ya_cargadas = :omitidas,
-                   mensaje = :mensaje
+                   mensaje = :mensaje, inv_filas_leidas = :inv_leidas, inv_filas_validas = :inv_validas,
+                   inv_filas_rechazadas = :inv_rechazadas, inv_filas_excluidas = :inv_excluidas,
+                   filas_insertadas_fact_inventario = :inv_insertadas
             WHERE id_carga = :id"""), {
             "id": id_carga, "fin": fin, "estado": estado, "mensaje": mensaje,
             "leidas": conteos.get("lineas_leidas"), "validas": conteos.get("lineas_validas"),
             "rechazadas": conteos.get("lineas_rechazadas"), "excluidas": conteos.get("lineas_excluidas"),
             "insertadas": conteos.get("fact_insertadas"), "omitidas": conteos.get("fact_omitidas"),
+            "inv_leidas": conteos.get("inv_filas_leidas"), "inv_validas": conteos.get("inv_filas_validas"),
+            "inv_rechazadas": conteos.get("inv_filas_rechazadas"),
+            "inv_excluidas": conteos.get("inv_filas_excluidas"),
+            "inv_insertadas": conteos.get("fact_inventario_insertadas"),
         })
 
 
@@ -131,10 +152,10 @@ def _distinto(a, b) -> bool:
 
 
 # ---------------------------------------------------------------- dimensiones
-def _cargar_dim_fecha(con, ventas: pd.DataFrame) -> int:
-    """Calendario completo de los años que aparecen en las ventas."""
-    inicio = date(int(ventas["fecha_hora"].min().year), 1, 1)
-    fin = date(int(ventas["fecha_hora"].max().year), 12, 31)
+def _cargar_dim_fecha(con, fechas: pd.Series) -> int:
+    """Calendario completo de los años que aparecen en los hechos."""
+    inicio = date(int(fechas.min().year), 1, 1)
+    fin = date(int(fechas.max().year), 12, 31)
     existentes = set(pd.read_sql(text("SELECT sk_fecha FROM dim_fecha"), con)["sk_fecha"])
     filas = []
     for dia in pd.date_range(inicio, fin).date:
@@ -313,6 +334,60 @@ def _cargar_fact(con, ventas: pd.DataFrame, sal: str, id_carga: str) -> dict:
             "ventas_cliente_sin_version": sin_version}
 
 
+COLUMNAS_FACT_INVENTARIO = ["sk_fecha", "sk_producto", "sk_sucursal", "stock_cierre", "unidades_recibidas",
+                            "unidades_vendidas", "stock_minimo", "es_quiebre", "id_carga", "archivo_origen",
+                            "fila_origen"]
+GRANO_INVENTARIO = ["sk_fecha", "sk_producto", "sk_sucursal"]
+
+
+def _cargar_fact_inventario(con, inventario: pd.DataFrame, id_carga: str) -> dict:
+    """Snapshot diario: una fila por producto, sucursal y día (idempotente por su grano)."""
+    inv = inventario.reset_index(drop=True).copy()
+    inv["sk_fecha"] = inv["fecha"].dt.strftime("%Y%m%d").astype("int64")
+    inv["sk_producto"] = inv["cod_producto"].map(_buscar(con, "dim_producto", "cod_producto", "sk_producto"))
+    inv["sk_sucursal"] = inv["cod_sucursal"].map(_buscar(con, "dim_sucursal", "cod_sucursal", "sk_sucursal"))
+    faltantes = inv[["sk_producto", "sk_sucursal"]].isna().any(axis=1)
+    if faltantes.any():
+        raise ValueError(f"{int(faltantes.sum())} registros de inventario sin clave de dimensión")
+    inv = inv.astype({"sk_producto": "int64", "sk_sucursal": "int64"}).assign(
+        es_quiebre=(inv["stock_cierre"] == 0).astype("int64"), id_carga=id_carga,
+        archivo_origen=inv["_archivo"], fila_origen=inv["_fila_origen"].astype("int64"))
+
+    existentes = pd.read_sql(text("SELECT sk_fecha, sk_producto, sk_sucursal FROM fact_inventario"), con)
+    marca = inv.merge(existentes.assign(_ya_cargada=True), on=GRANO_INVENTARIO, how="left")
+    nuevas = inv[marca["_ya_cargada"].isna().to_numpy()]
+    if not nuevas.empty:
+        nuevas[COLUMNAS_FACT_INVENTARIO].to_sql("fact_inventario", con, if_exists="append", index=False,
+                                                chunksize=10000)
+    return {"fact_inventario_insertadas": len(nuevas), "fact_inventario_omitidas": len(inv) - len(nuevas)}
+
+
+def refrescar_agregado_inventario(con) -> int:
+    """Refresca agg_inventario_mes desde fact_inventario (emulación de vista materializada)."""
+    con.execute(text("DELETE FROM agg_inventario_mes"))
+    resultado = con.execute(text("""
+        INSERT INTO agg_inventario_mes
+        WITH base AS (
+            SELECT f.sk_producto, f.sk_sucursal, f.stock_cierre, f.unidades_vendidas,
+                   f.unidades_recibidas, f.es_quiebre, d.anio_mes, d.dia,
+                   CAST(strftime('%d', date(d.fecha, 'start of month', '+1 month', '-1 day')) AS INTEGER) AS dias_mes,
+                   ROW_NUMBER() OVER (PARTITION BY f.sk_producto, f.sk_sucursal, d.anio_mes
+                                      ORDER BY f.sk_fecha DESC) AS orden_desde_fin
+            FROM fact_inventario f JOIN dim_fecha d ON d.sk_fecha = f.sk_fecha)
+        SELECT b.anio_mes, s.cod_sucursal, s.nombre_sucursal, s.region, s.zona, p.categoria,
+               COUNT(*), SUM(b.es_quiebre),
+               SUM(CASE WHEN b.orden_desde_fin = 1 THEN b.stock_cierre ELSE 0 END),
+               SUM(b.unidades_vendidas),
+               SUM(CASE WHEN b.dia > b.dias_mes - 28 THEN b.unidades_vendidas ELSE 0 END),
+               SUM(b.unidades_recibidas),
+               datetime('now', 'localtime')
+        FROM base b
+        JOIN dim_sucursal s ON s.sk_sucursal = b.sk_sucursal
+        JOIN dim_producto p ON p.sk_producto = b.sk_producto
+        GROUP BY b.anio_mes, s.cod_sucursal, s.nombre_sucursal, s.region, s.zona, p.categoria"""))
+    return resultado.rowcount
+
+
 def refrescar_agregados(con) -> int:
     """Refresca el agregado precalculado (emulación de vista materializada)."""
     con.execute(text("DELETE FROM agg_ventas_mes_region"))
@@ -335,13 +410,16 @@ def cargar(con, silver, id_carga: str, log) -> dict:
         log.warning("Gold | DR360_SALT_PSEUDONIMO no definido: se usa una sal de desarrollo (no usar en producción)")
         sal = "solo-desarrollo"
     hoy = date.today().isoformat()
-    resultado = {"dim_fecha_nuevas": _cargar_dim_fecha(con, silver.ventas)}
+    fechas = pd.concat([silver.ventas["fecha_hora"], silver.inventario["fecha"]])
+    resultado = {"dim_fecha_nuevas": _cargar_dim_fecha(con, fechas)}
     resultado.update(_cargar_dim_sucursal(con, silver.sucursales, id_carga, hoy))
     resultado.update(_cargar_dim_producto(con, silver.productos, id_carga, hoy))
     resultado.update(_cargar_dim_cliente(con, silver.clientes, sal, id_carga, hoy))
     resultado.update(_cargar_fact(con, silver.ventas, sal, id_carga))
+    resultado.update(_cargar_fact_inventario(con, silver.inventario, id_carga))
     silver.rechazos.to_sql("etl_rechazos", con, if_exists="append", index=False)
     resultado["agregados_refrescados"] = refrescar_agregados(con)
+    resultado["agregados_inventario_refrescados"] = refrescar_agregado_inventario(con)
     for clave, valor in resultado.items():
         log.info("Gold   | %-34s | %6d", clave, valor)
     return resultado
