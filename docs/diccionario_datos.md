@@ -75,7 +75,7 @@ Calendario diario con jerarquía año > semestre > trimestre > mes > día y feri
 
 ## `dim_cliente` — Dimensión conformada · SCD tipo 2
 
-Clientes identificados, seudonimizados. Cada cambio de comuna/región o de segmento crea una nueva versión con su vigencia, para que las ventas pasadas conserven la región y el segmento que el cliente tenía al comprar.
+Clientes identificados, seudonimizados. Cada cambio de comuna/región o de segmento crea una nueva versión con su vigencia, para que las ventas pasadas conserven la región y el segmento que el cliente tenía al comprar. Un cliente que deja de venir en el CRM no se borra: se cierra su versión vigente y queda sin versión actual, y sus ventas siguen enlazadas a las versiones que tuvo.
 
 | Columna | Tipo | Rol | Descripción | Sinónimos |
 |---|---|---|---|---|
@@ -87,8 +87,8 @@ Clientes identificados, seudonimizados. Cada cambio de comuna/región o de segme
 | `segmento` | TEXT | Atributo SCD2 | Segmento comercial: Nuevo, Ocasional, Frecuente o VIP. |  |
 | `fecha_registro` | TEXT | Atributo SCD1 | Fecha de registro en el CRM. |  |
 | `fecha_inicio_vigencia` | TEXT | SCD2 | Desde cuándo rige la versión. |  |
-| `fecha_fin_vigencia` | TEXT | SCD2 | Hasta cuándo rige la versión; 9999-12-31 = vigente. |  |
-| `es_actual` | INTEGER | SCD2 | 1 si es la versión vigente. |  |
+| `fecha_fin_vigencia` | TEXT | SCD2 | Hasta cuándo rige la versión; 9999-12-31 = vigente. En un cliente dado de baja es la fecha de la baja. |  |
+| `es_actual` | INTEGER | SCD2 | 1 si es la versión vigente. Un cliente dado de baja no tiene ninguna. |  |
 | `version` | INTEGER | SCD2 | Número correlativo de versión del cliente. |  |
 | `id_carga` | TEXT | Auditoría | Carga que insertó la versión. |  |
 

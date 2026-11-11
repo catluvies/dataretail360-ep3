@@ -122,7 +122,7 @@
     },
     "dim_cliente": {
       "tipo": "Dimensión conformada · SCD tipo 2",
-      "descripcion": "Clientes identificados, seudonimizados. Cada cambio de comuna/región o de segmento crea una nueva versión con su vigencia, para que las ventas pasadas conserven la región y el segmento que el cliente tenía al comprar.",
+      "descripcion": "Clientes identificados, seudonimizados. Cada cambio de comuna/región o de segmento crea una nueva versión con su vigencia, para que las ventas pasadas conserven la región y el segmento que el cliente tenía al comprar. Un cliente que deja de venir en el CRM no se borra: se cierra su versión vigente y queda sin versión actual, y sus ventas siguen enlazadas a las versiones que tuvo.",
       "columnas": {
         "sk_cliente": {"descripcion": "Clave sustituta de la versión. -1 = cliente no identificado.", "tipo": "INTEGER", "rol": "PK"},
         "id_cliente": {"descripcion": "Seudónimo estable del RUT (SHA-256 con sal secreta). No permite recuperar el RUT.", "tipo": "TEXT", "rol": "Clave de negocio"},
@@ -132,8 +132,8 @@
         "segmento": {"descripcion": "Segmento comercial: Nuevo, Ocasional, Frecuente o VIP.", "tipo": "TEXT", "rol": "Atributo SCD2"},
         "fecha_registro": {"descripcion": "Fecha de registro en el CRM.", "tipo": "TEXT", "rol": "Atributo SCD1"},
         "fecha_inicio_vigencia": {"descripcion": "Desde cuándo rige la versión.", "tipo": "TEXT", "rol": "SCD2"},
-        "fecha_fin_vigencia": {"descripcion": "Hasta cuándo rige la versión; 9999-12-31 = vigente.", "tipo": "TEXT", "rol": "SCD2"},
-        "es_actual": {"descripcion": "1 si es la versión vigente.", "tipo": "INTEGER", "rol": "SCD2"},
+        "fecha_fin_vigencia": {"descripcion": "Hasta cuándo rige la versión; 9999-12-31 = vigente. En un cliente dado de baja es la fecha de la baja.", "tipo": "TEXT", "rol": "SCD2"},
+        "es_actual": {"descripcion": "1 si es la versión vigente. Un cliente dado de baja no tiene ninguna.", "tipo": "INTEGER", "rol": "SCD2"},
         "version": {"descripcion": "Número correlativo de versión del cliente.", "tipo": "INTEGER", "rol": "SCD2"},
         "id_carga": {"descripcion": "Carga que insertó la versión.", "tipo": "TEXT", "rol": "Auditoría"}
       }

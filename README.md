@@ -53,6 +53,19 @@ Después se puede abrir `notebooks/EP3_evidencias.ipynb` para ver la evidencia.
 Ojo: `generar_fuentes` sobrescribe `data/fuentes/`. Si editaste alguna fuente a mano (por ejemplo,
 el CRM para una demo), respáldala antes.
 
+### Altas, cambios y bajas de clientes (SCD tipo 2)
+
+El CRM de cada lote (`data/fuentes/lote_N/crm_clientes.db`, tabla `clientes`) es una foto completa.
+Al volver a cargar el lote más reciente, `dim_cliente` queda así:
+
+| En el CRM | En `dim_cliente` |
+|---|---|
+| Cliente nuevo | Versión 1, vigente. Si el RUT no es válido se rechaza y queda en `etl_rechazos` |
+| Cambia la comuna o el segmento | Se cierra la versión vigente y se abre otra, que rige desde la fecha de actualización del CRM o, si el CRM no fechó el cambio, desde el día de la carga |
+| El cliente ya no viene | No se borra: se cierra su versión vigente y queda sin versión actual. Sus ventas siguen enlazadas |
+
+Reprocesar un lote anterior al último cargado no modifica las dimensiones.
+
 ## Actividad 3.2 · Storytelling con datos
 
 ```bash

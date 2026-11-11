@@ -181,7 +181,7 @@ ATRIBUTOS_SUCURSAL = ["nombre_sucursal", "tipo_sucursal", "direccion", "comuna",
                       "pais", "latitud", "longitud", "fecha_apertura"]
 
 
-def _cargar_dim_sucursal(con, sucursales: pd.DataFrame, id_carga: str, hoy: str) -> dict:
+def _cargar_dim_sucursal(con, sucursales: pd.DataFrame, id_carga: str, hoy: str, actualizar: bool = True) -> dict:
     """SCD tipo 1: una fila por sucursal; los cambios sobrescriben."""
     actual = pd.read_sql(text("SELECT * FROM dim_sucursal"), con)
     entrante = sucursales[["cod_sucursal"] + ATRIBUTOS_SUCURSAL]
@@ -189,6 +189,8 @@ def _cargar_dim_sucursal(con, sucursales: pd.DataFrame, id_carga: str, hoy: str)
     if not nuevas.empty:
         nuevas.assign(fecha_actualizacion=hoy, id_carga=id_carga).to_sql(
             "dim_sucursal", con, if_exists="append", index=False)
+    if not actualizar:
+        return {"sucursales_nuevas": len(nuevas), "sucursales_scd1": 0}
     cambios = []
     for fila in entrante.merge(actual, on="cod_sucursal", suffixes=("", "_actual")).to_dict("records"):
         if any(_distinto(fila[a], fila[f"{a}_actual"]) for a in ATRIBUTOS_SUCURSAL):
@@ -204,7 +206,7 @@ def _cargar_dim_sucursal(con, sucursales: pd.DataFrame, id_carga: str, hoy: str)
 SCD1_PRODUCTO = ["sku_web", "nombre_producto", "marca", "linea", "subcategoria", "precio_lista"]
 
 
-def _cargar_dim_producto(con, productos: pd.DataFrame, id_carga: str, hoy: str) -> dict:
+def _cargar_dim_producto(con, productos: pd.DataFrame, id_carga: str, hoy: str, actualizar: bool = True) -> dict:
     """SCD tipo 1 en atributos descriptivos; SCD tipo 3 en la categoría."""
     actual = pd.read_sql(text("SELECT * FROM dim_producto"), con)
     entrante = productos[["cod_producto", "categoria"] + SCD1_PRODUCTO]
@@ -212,6 +214,8 @@ def _cargar_dim_producto(con, productos: pd.DataFrame, id_carga: str, hoy: str) 
     if not nuevos.empty:
         nuevos.assign(fecha_actualizacion=hoy, id_carga=id_carga).to_sql(
             "dim_producto", con, if_exists="append", index=False)
+    if not actualizar:
+        return {"productos_nuevos": len(nuevos), "productos_scd1": 0, "productos_scd3": 0}
     scd1, scd3 = 0, 0
     for fila in entrante.merge(actual, on="cod_producto", suffixes=("", "_actual")).to_dict("records"):
         cambios = {a: fila[a] for a in SCD1_PRODUCTO if _distinto(fila[a], fila[f"{a}_actual"])}
@@ -228,8 +232,26 @@ def _cargar_dim_producto(con, productos: pd.DataFrame, id_carga: str, hoy: str) 
     return {"productos_nuevos": len(nuevos), "productos_scd1": scd1, "productos_scd3": scd3}
 
 
-def _cargar_dim_cliente(con, clientes: pd.DataFrame, sal: str, id_carga: str, hoy: str) -> dict:
+def _dia_anterior(fecha: str) -> str:
+    return (date.fromisoformat(fecha) - timedelta(days=1)).isoformat()
+
+
+def _cargar_dim_cliente(con, clientes: pd.DataFrame, sal: str, id_carga: str, hoy: str,
+                        actualizar: bool = True) -> dict:
     """SCD tipo 2: un cambio de comuna/región o de segmento abre una nueva versión.
+
+    Alta: el cliente entra con la versión 1, vigente desde el inicio de los tiempos.
+
+    Cambio: se cierra la versión vigente y se abre otra. La nueva rige desde la fecha
+    de actualización del CRM, siempre que sea posterior al registro del cliente, al
+    inicio de su versión vigente y a su última venta ya cargada; si no lo es (o no
+    viene), el CRM no fechó el cambio y rige desde el día de la carga. Así ninguna
+    venta cargada queda fuera de la vigencia de su versión. Si la versión vigente se
+    abrió ese mismo día, el cambio se aplica sobre ella: la vigencia es diaria.
+
+    Baja: un cliente que deja de venir en el CRM no se borra, porque sus ventas siguen
+    apuntando a él. Se cierra su versión vigente y queda sin versión actual. Si vuelve
+    a aparecer se abre una versión nueva (o se reabre la suya, si la baja fue ese día).
 
     Reglas de supervivencia:
       * comuna 'Sin información' que luego se informa -> se completa en todas
@@ -239,17 +261,33 @@ def _cargar_dim_cliente(con, clientes: pd.DataFrame, sal: str, id_carga: str, ho
     entrante = clientes.assign(id_cliente=clientes["rut"].map(lambda r: rc.seudonimizar(r, sal)))
     entrante = entrante[["id_cliente", "comuna", "region", "zona", "segmento",
                          "fecha_registro", "fecha_actualizacion"]]
-    actual = pd.read_sql(text("SELECT * FROM dim_cliente WHERE es_actual = 1 AND sk_cliente <> -1"), con)
+    # Última versión de cada cliente: la vigente o, si está de baja, la que se cerró.
+    ultima = pd.read_sql(text("""
+        SELECT * FROM dim_cliente d
+        WHERE sk_cliente <> -1
+          AND version = (SELECT MAX(version) FROM dim_cliente WHERE id_cliente = d.id_cliente)"""), con)
 
-    nuevos = entrante[~entrante["id_cliente"].isin(actual["id_cliente"])]
+    nuevos = entrante[~entrante["id_cliente"].isin(ultima["id_cliente"])]
     if not nuevos.empty:
         nuevos.drop(columns="fecha_actualizacion").assign(
             fecha_inicio_vigencia=INICIO_VIGENCIA, fecha_fin_vigencia=FIN_VIGENCIA,
             es_actual=1, version=1, id_carga=id_carga,
         ).to_sql("dim_cliente", con, if_exists="append", index=False)
+    conteo = {"clientes_nuevos": len(nuevos), "clientes_scd2_nuevas_versiones": 0,
+              "clientes_scd1_comuna_completada": 0, "clientes_dados_de_baja": 0, "clientes_reactivados": 0}
+    if not actualizar:
+        return conteo
 
-    completados, corregidos, cierres, versiones = [], [], [], []
-    for fila in entrante.merge(actual, on="id_cliente", suffixes=("", "_actual")).to_dict("records"):
+    ultima_venta = pd.read_sql(text("""
+        SELECT c.id_cliente, MAX(d.fecha) AS fecha
+        FROM fact_ventas f
+        JOIN dim_cliente c ON c.sk_cliente = f.sk_cliente
+        JOIN dim_fecha d   ON d.sk_fecha = f.sk_fecha
+        WHERE f.sk_cliente <> -1 GROUP BY c.id_cliente"""), con).set_index("id_cliente")["fecha"].to_dict()
+
+    completados, corregidos, reabiertos, en_sitio, cierres, versiones = [], [], [], [], [], []
+    reactivados = 0
+    for fila in entrante.merge(ultima, on="id_cliente", suffixes=("", "_actual")).to_dict("records"):
         geo = {k: fila[k] for k in ("comuna", "region", "zona")}
         if fila["comuna"] == SIN_INFORMACION:
             geo = {k: fila[f"{k}_actual"] for k in ("comuna", "region", "zona")}
@@ -259,20 +297,35 @@ def _cargar_dim_cliente(con, clientes: pd.DataFrame, sal: str, id_carga: str, ho
         if _distinto(fila["fecha_registro"], fila["fecha_registro_actual"]):
             corregidos.append({"fecha_registro": fila["fecha_registro"], "id": fila["id_cliente"]})
 
+        siguiente = {"id_cliente": fila["id_cliente"], **geo, "segmento": fila["segmento"],
+                     "fecha_registro": fila["fecha_registro"], "fecha_fin_vigencia": FIN_VIGENCIA,
+                     "es_actual": 1, "version": fila["version"] + 1, "id_carga": id_carga}
+        if not fila["es_actual"]:
+            # Estaba de baja y vuelve a venir en el CRM.
+            reactivados += 1
+            if fila["fecha_fin_vigencia"] < hoy:
+                versiones.append({**siguiente, "fecha_inicio_vigencia": hoy})
+                continue
+            reabiertos.append({"sk": fila["sk_cliente"], "fin": FIN_VIGENCIA})
+
         cambia = _distinto(geo["comuna"], fila["comuna_actual"]) or _distinto(fila["segmento"], fila["segmento_actual"])
         if not cambia:
             continue
+        piso = max(fila["fecha_inicio_vigencia"], ultima_venta.get(fila["id_cliente"], INICIO_VIGENCIA))
+        registro = fila["fecha_registro"] if pd.notna(fila["fecha_registro"]) else INICIO_VIGENCIA
         efectiva = fila["fecha_actualizacion"]
-        if not efectiva or efectiva <= fila["fecha_inicio_vigencia"]:
+        if pd.isna(efectiva) or not max(piso, registro) < efectiva <= hoy:
             efectiva = hoy
-        cierre = (date.fromisoformat(efectiva) - timedelta(days=1)).isoformat()
-        cierres.append({"sk": fila["sk_cliente"], "cierre": cierre})
-        versiones.append({
-            "id_cliente": fila["id_cliente"], **geo, "segmento": fila["segmento"],
-            "fecha_registro": fila["fecha_registro"], "fecha_inicio_vigencia": efectiva,
-            "fecha_fin_vigencia": FIN_VIGENCIA, "es_actual": 1, "version": fila["version"] + 1,
-            "id_carga": id_carga,
-        })
+        if efectiva <= piso:
+            en_sitio.append({**geo, "segmento": fila["segmento"], "sk": fila["sk_cliente"], "id_carga": id_carga})
+            continue
+        cierres.append({"sk": fila["sk_cliente"], "cierre": _dia_anterior(efectiva)})
+        versiones.append({**siguiente, "fecha_inicio_vigencia": efectiva})
+
+    vigentes = ultima[ultima["es_actual"] == 1]
+    bajas = [{"sk": fila["sk_cliente"],
+              "cierre": max(hoy, fila["fecha_inicio_vigencia"], ultima_venta.get(fila["id_cliente"], INICIO_VIGENCIA))}
+             for fila in vigentes[~vigentes["id_cliente"].isin(entrante["id_cliente"])].to_dict("records")]
 
     if completados:
         con.execute(text("""UPDATE dim_cliente SET comuna = :comuna, region = :region, zona = :zona
@@ -280,12 +333,21 @@ def _cargar_dim_cliente(con, clientes: pd.DataFrame, sal: str, id_carga: str, ho
     if corregidos:
         con.execute(text("UPDATE dim_cliente SET fecha_registro = :fecha_registro WHERE id_cliente = :id"),
                     corregidos)
-    if cierres:
+    if reabiertos:
+        con.execute(text("""UPDATE dim_cliente SET fecha_fin_vigencia = :fin, es_actual = 1
+                            WHERE sk_cliente = :sk"""), reabiertos)
+    if en_sitio:
+        con.execute(text("""UPDATE dim_cliente SET comuna = :comuna, region = :region, zona = :zona,
+                                   segmento = :segmento, id_carga = :id_carga
+                            WHERE sk_cliente = :sk"""), en_sitio)
+    if cierres or bajas:
         con.execute(text("""UPDATE dim_cliente SET fecha_fin_vigencia = :cierre, es_actual = 0
-                            WHERE sk_cliente = :sk"""), cierres)
+                            WHERE sk_cliente = :sk"""), cierres + bajas)
+    if versiones:
         pd.DataFrame(versiones).to_sql("dim_cliente", con, if_exists="append", index=False)
-    return {"clientes_nuevos": len(nuevos), "clientes_scd2_nuevas_versiones": len(versiones),
-            "clientes_scd1_comuna_completada": len(completados)}
+    conteo.update(clientes_scd2_nuevas_versiones=len(cierres), clientes_scd1_comuna_completada=len(completados),
+                  clientes_dados_de_baja=len(bajas), clientes_reactivados=reactivados)
+    return conteo
 
 
 # --------------------------------------------------------------------- hecho
@@ -410,11 +472,18 @@ def cargar(con, silver, id_carga: str, log) -> dict:
         log.warning("Gold | DR360_SALT_PSEUDONIMO no definido: se usa una sal de desarrollo (no usar en producción)")
         sal = "solo-desarrollo"
     hoy = date.today().isoformat()
+    # Los maestros de cada lote son una foto completa. Solo la foto más reciente modifica
+    # las dimensiones: reprocesar un lote antiguo agrega lo que falte, pero no deshace cambios.
+    ultimo_lote = con.execute(text("SELECT MAX(lote) FROM etl_control_cargas WHERE estado = 'EXITOSA'")).scalar()
+    foto_reciente = ultimo_lote is None or silver.lote >= ultimo_lote
+    if not foto_reciente:
+        log.warning("Gold | lote %d anterior al último cargado (%d): las dimensiones no se modifican",
+                    silver.lote, ultimo_lote)
     fechas = pd.concat([silver.ventas["fecha_hora"], silver.inventario["fecha"]])
     resultado = {"dim_fecha_nuevas": _cargar_dim_fecha(con, fechas)}
-    resultado.update(_cargar_dim_sucursal(con, silver.sucursales, id_carga, hoy))
-    resultado.update(_cargar_dim_producto(con, silver.productos, id_carga, hoy))
-    resultado.update(_cargar_dim_cliente(con, silver.clientes, sal, id_carga, hoy))
+    resultado.update(_cargar_dim_sucursal(con, silver.sucursales, id_carga, hoy, foto_reciente))
+    resultado.update(_cargar_dim_producto(con, silver.productos, id_carga, hoy, foto_reciente))
+    resultado.update(_cargar_dim_cliente(con, silver.clientes, sal, id_carga, hoy, foto_reciente))
     resultado.update(_cargar_fact(con, silver.ventas, sal, id_carga))
     resultado.update(_cargar_fact_inventario(con, silver.inventario, id_carga))
     silver.rechazos.to_sql("etl_rechazos", con, if_exists="append", index=False)
