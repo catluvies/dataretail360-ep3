@@ -6,6 +6,8 @@ la carga completa se revierte y Gold queda como estaba.
 import pandas as pd
 from sqlalchemy import text
 
+from . import config
+
 
 class ValidacionError(Exception):
     def __init__(self, mensaje: str, resultados: list[dict]):
@@ -15,6 +17,51 @@ class ValidacionError(Exception):
 
 def _escalar(con, sql: str, **parametros):
     return con.execute(text(sql), parametros).scalar()
+
+
+def _validar_inventario(con, silver, chequear) -> None:
+    c = silver.conteos
+    suma = c["inv_filas_validas"] + c["inv_filas_rechazadas"] + c["inv_filas_excluidas"]
+    chequear("V10 Inventario: conservación de filas Bronze -> Silver", c["inv_filas_leidas"] == suma,
+             f"{c['inv_filas_leidas']} leídas = {c['inv_filas_validas']} válidas + "
+             f"{c['inv_filas_rechazadas']} rechazadas + {c['inv_filas_excluidas']} excluidas")
+
+    huerfanas = _escalar(con, """
+        SELECT COUNT(*) FROM fact_inventario f
+        LEFT JOIN dim_fecha d    ON d.sk_fecha = f.sk_fecha
+        LEFT JOIN dim_producto p ON p.sk_producto = f.sk_producto
+        LEFT JOIN dim_sucursal s ON s.sk_sucursal = f.sk_sucursal
+        WHERE d.sk_fecha IS NULL OR p.sk_producto IS NULL OR s.sk_sucursal IS NULL""")
+    chequear("V11 Inventario: integridad referencial del hecho", huerfanas == 0, f"{huerfanas} filas huérfanas")
+
+    inv = silver.inventario
+    inicio, fin = inv["fecha"].min(), inv["fecha"].max()
+    periodo = {"desde": int(inicio.strftime("%Y%m%d")), "hasta": int(fin.strftime("%Y%m%d"))}
+    filas_gold, stock_gold, vendidas_inv = con.execute(text("""
+        SELECT COUNT(*), COALESCE(SUM(stock_cierre), 0), COALESCE(SUM(unidades_vendidas), 0)
+        FROM fact_inventario WHERE sk_fecha BETWEEN :desde AND :hasta"""), periodo).one()
+    stock_silver = int(inv["stock_cierre"].sum())
+    chequear("V12 Inventario: cuadratura Silver -> Gold (filas y stock del período)",
+             filas_gold == len(inv) and stock_gold == stock_silver,
+             f"Silver {len(inv)} filas / {stock_silver:,} unidades vs Gold {filas_gold} filas / {stock_gold:,} unidades")
+
+    # Completitud del snapshot: cada producto del maestro, en cada sucursal abierta, cada día.
+    aperturas = pd.to_datetime(silver.sucursales["fecha_apertura"])
+    dias_abiertos = ((fin - aperturas.clip(lower=inicio)).dt.days + 1).clip(lower=0).sum()
+    esperadas = int(len(silver.productos) * dias_abiertos)
+    completitud = filas_gold / esperadas if esperadas else 0
+    chequear("V13 Inventario: completitud del snapshot diario",
+             completitud >= config.COMPLETITUD_MINIMA_INVENTARIO,
+             f"{filas_gold:,} de {esperadas:,} combinaciones producto-sucursal-día ({completitud:.2%}); "
+             f"mínimo {config.COMPLETITUD_MINIMA_INVENTARIO:.0%}")
+
+    vendidas_ventas = _escalar(con, """SELECT COALESCE(SUM(cantidad), 0) FROM fact_ventas
+                                       WHERE sk_fecha BETWEEN :desde AND :hasta""", **periodo)
+    diferencia = abs(vendidas_inv - vendidas_ventas) / vendidas_ventas if vendidas_ventas else 1
+    chequear("V14 Cuadratura entre hechos: unidades vendidas de inventario vs fact_ventas",
+             diferencia <= config.TOLERANCIA_CUADRATURA_UNIDADES,
+             f"inventario {vendidas_inv:,} vs ventas {vendidas_ventas:,} unidades (diferencia {diferencia:.2%}; "
+             f"tolerancia {config.TOLERANCIA_CUADRATURA_UNIDADES:.0%}, explicada por filas rechazadas en Silver)")
 
 
 def ejecutar(con, silver, id_carga: str, log) -> list[dict]:
@@ -90,6 +137,8 @@ def ejecutar(con, silver, id_carga: str, log) -> list[dict]:
                         if c in {"rut", "email", "nombre", "telefono", "rut_cliente", "email_cliente"})
     chequear("V09 Gold sin datos personales directos", not personales,
              f"columnas personales en Gold: {personales or 'ninguna'}")
+
+    _validar_inventario(con, silver, chequear)
 
     for r in resultados:
         nivel = log.info if r["resultado"] == "OK" else log.error

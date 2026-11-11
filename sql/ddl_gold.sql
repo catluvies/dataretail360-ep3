@@ -1,6 +1,8 @@
 -- =====================================================================
--- Capa Gold · DataRetail 360 · Esquema estrella del proceso Ventas
+-- Capa Gold · DataRetail 360 · Constelación de hechos: Ventas e Inventario
 -- Grano de fact_ventas: una línea de producto de cada boleta o pedido.
+-- Grano de fact_inventario: el stock de un producto, en una sucursal, por día.
+-- Ambos hechos comparten las dimensiones conformadas fecha, producto y sucursal.
 -- Motor: SQLite.
 -- =====================================================================
 
@@ -131,6 +133,30 @@ CREATE INDEX IF NOT EXISTS ix_fact_ventas_sucursal ON fact_ventas (sk_sucursal);
 CREATE INDEX IF NOT EXISTS ix_fact_ventas_cliente  ON fact_ventas (sk_cliente);
 CREATE INDEX IF NOT EXISTS ix_fact_ventas_canal    ON fact_ventas (sk_canal);
 
+-- --------------------------------------------------- Hecho: Inventario
+-- Snapshot periódico diario. Grano: el stock de un producto, en una sucursal,
+-- al cierre de cada día (Bus Matrix de la EP1). Reutiliza tres dimensiones
+-- conformadas de Ventas: fecha, producto y sucursal.
+-- stock_cierre es semiaditiva: se suma entre productos y sucursales, nunca
+-- entre días (para un mes se toma el último día). stock_minimo no es aditiva.
+CREATE TABLE IF NOT EXISTS fact_inventario (
+    sk_inventario       INTEGER PRIMARY KEY AUTOINCREMENT,
+    sk_fecha            INTEGER NOT NULL REFERENCES dim_fecha (sk_fecha),
+    sk_producto         INTEGER NOT NULL REFERENCES dim_producto (sk_producto),
+    sk_sucursal         INTEGER NOT NULL REFERENCES dim_sucursal (sk_sucursal),
+    stock_cierre        INTEGER NOT NULL CHECK (stock_cierre >= 0),       -- semiaditiva
+    unidades_recibidas  INTEGER NOT NULL CHECK (unidades_recibidas >= 0), -- aditiva
+    unidades_vendidas   INTEGER NOT NULL CHECK (unidades_vendidas >= 0),  -- aditiva
+    stock_minimo        INTEGER NOT NULL CHECK (stock_minimo >= 0),       -- punto de reorden, no aditiva
+    es_quiebre          INTEGER NOT NULL CHECK (es_quiebre = (stock_cierre = 0)),
+    id_carga            TEXT    NOT NULL,                                 -- linaje hacia Bronze
+    archivo_origen      TEXT    NOT NULL,
+    fila_origen         INTEGER NOT NULL,
+    UNIQUE (sk_fecha, sk_producto, sk_sucursal)                           -- grano e idempotencia
+);
+CREATE INDEX IF NOT EXISTS ix_fact_inventario_producto ON fact_inventario (sk_producto);
+CREATE INDEX IF NOT EXISTS ix_fact_inventario_sucursal ON fact_inventario (sk_sucursal);
+
 -- ------------------------------------------------- Tablas de control ETL
 CREATE TABLE IF NOT EXISTS etl_control_cargas (
     id_carga                     TEXT PRIMARY KEY,
@@ -145,7 +171,12 @@ CREATE TABLE IF NOT EXISTS etl_control_cargas (
     filas_insertadas_fact        INTEGER,
     filas_omitidas_ya_cargadas   INTEGER,
     version_codigo               TEXT,                 -- commit de Git que ejecutó la carga
-    mensaje                      TEXT
+    mensaje                      TEXT,
+    inv_filas_leidas             INTEGER,              -- inventario: leídas = válidas + rechazadas + excluidas
+    inv_filas_validas            INTEGER,
+    inv_filas_rechazadas         INTEGER,
+    inv_filas_excluidas          INTEGER,
+    filas_insertadas_fact_inventario INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS etl_rechazos (
@@ -184,4 +215,25 @@ CREATE TABLE IF NOT EXISTS agg_ventas_mes_region (
     ticket_promedio  INTEGER,
     fecha_refresco   TEXT    NOT NULL,
     PRIMARY KEY (anio_mes, region, canal)
+);
+
+-- Inventario por mes, sucursal y categoría. Guarda los componentes aditivos
+-- de los KPIs para que cualquier filtro los recalcule bien:
+--   tasa de quiebre = SUM(dias_quiebre) / SUM(registros)
+--   días de cobertura = SUM(stock_cierre_mes) / (SUM(unidades_vendidas_28d) / 28)
+CREATE TABLE IF NOT EXISTS agg_inventario_mes (
+    anio_mes               TEXT    NOT NULL,
+    cod_sucursal           TEXT    NOT NULL,
+    sucursal               TEXT    NOT NULL,
+    region                 TEXT    NOT NULL,
+    zona                   TEXT    NOT NULL,
+    categoria              TEXT    NOT NULL,
+    registros              INTEGER NOT NULL,     -- días-producto informados
+    dias_quiebre           INTEGER NOT NULL,     -- días-producto con stock 0 al cierre
+    stock_cierre_mes       INTEGER NOT NULL,     -- stock del último día informado del mes
+    unidades_vendidas      INTEGER NOT NULL,     -- todo el mes
+    unidades_vendidas_28d  INTEGER NOT NULL,     -- últimos 28 días del mes
+    unidades_recibidas     INTEGER NOT NULL,
+    fecha_refresco         TEXT    NOT NULL,
+    PRIMARY KEY (anio_mes, cod_sucursal, categoria)
 );
