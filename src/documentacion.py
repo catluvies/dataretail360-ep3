@@ -1,8 +1,9 @@
 """Genera la documentación del modelo a partir del esquema real de Gold.
 
-    docs/modelo_estrella.png        diagrama del esquema estrella
+    docs/modelo_estrella.png        diagrama de la constelación (Ventas + Inventario)
     docs/modelo_estrella.drawio     el mismo diagrama, editable en diagrams.net
     docs/arquitectura_medallion.png flujo Fuentes -> Bronze -> Silver -> Gold -> Consumo
+    docs/diccionario_datos.md       diccionario de datos, métricas y reglas para IA
 
 Uso (después de correr el pipeline):  python -m src.documentacion
 """
@@ -18,13 +19,21 @@ from sqlalchemy import inspect
 
 from . import config, gold
 
-TABLAS_MODELO = ["fact_ventas", "dim_fecha", "dim_cliente", "dim_producto", "dim_sucursal", "dim_canal"]
+TABLAS_MODELO = ["fact_ventas", "fact_inventario", "dim_fecha", "dim_cliente", "dim_producto",
+                 "dim_sucursal", "dim_canal"]
+HECHOS = [t for t in TABLAS_MODELO if t.startswith("fact")]
 COLORES = {"hecho": "#1f3a5f", "dimension": "#2a7f62", "texto": "#1d1d1f", "borde": "#8a8f98",
            "fondo_fila": "#ffffff", "scd": "#b4531c", "linaje": "#6b7280"}
 
 
 def _semantica() -> dict:
     return json.loads((config.DOCS / "capa_semantica.json").read_text(encoding="utf-8"))
+
+
+def _relaciones(engine) -> dict[str, list[str]]:
+    """Dimensiones a las que apunta cada hecho, leídas de sus claves foráneas."""
+    inspector = inspect(engine)
+    return {hecho: [f["referred_table"] for f in inspector.get_foreign_keys(hecho)] for hecho in HECHOS}
 
 
 def _esquema(engine) -> dict:
@@ -54,8 +63,11 @@ def _marca(columna: dict, rol: str) -> str:
 
 # ------------------------------------------------------- diagrama estrella
 POSICIONES = {  # (x, y) de la esquina superior izquierda, en unidades del lienzo
-    "fact_ventas": (39, 63), "dim_fecha": (2, 77), "dim_cliente": (78, 77),
-    "dim_producto": (78, 33), "dim_sucursal": (2, 37), "dim_canal": (40, 13),
+    # Izquierda: dimensiones solo de Ventas. Centro: dimensiones conformadas compartidas.
+    "dim_cliente": (2, 96), "dim_canal": (2, 30),
+    "fact_ventas": (29, 69),
+    "dim_fecha": (56, 98), "dim_producto": (56, 64), "dim_sucursal": (56, 34),
+    "fact_inventario": (83, 63),
 }
 ANCHO, ALTO_FILA, ALTO_TITULO = 21, 1.75, 3.2
 
@@ -98,39 +110,44 @@ def _borde_hacia(caja, destino):
     return cx + dx * escala, cy + dy * escala
 
 
-def generar_diagrama_estrella(esquema: dict, semantica: dict) -> None:
-    fig, ax = plt.subplots(figsize=(15, 11.5))
-    ax.set_xlim(0, 101)
-    ax.set_ylim(-3, 80)
+def generar_diagrama_estrella(esquema: dict, semantica: dict, relaciones: dict) -> None:
+    fig, ax = plt.subplots(figsize=(15.5, 15))
+    ax.set_xlim(0, 106)
+    ax.set_ylim(-5, 103)
     ax.axis("off")
     cajas = {t: _dibujar_tabla(ax, t, esquema[t], semantica, *POSICIONES[t]) for t in TABLAS_MODELO}
-    fx, fy, fw, fh = cajas["fact_ventas"]
-    for tabla in TABLAS_MODELO[1:]:
-        x, y, w, h = cajas[tabla]
-        origen = _borde_hacia(cajas[tabla], (fx + fw / 2, fy + fh / 2))
-        destino = _borde_hacia(cajas["fact_ventas"], (x + w / 2, y + h / 2))
-        ax.add_patch(FancyArrowPatch(origen, destino, arrowstyle="-", lw=1.3, color=COLORES["borde"]))
-        for etiqueta, desplazamiento in (("1", 0.12), ("N", 0.88)):
-            px = origen[0] + (destino[0] - origen[0]) * desplazamiento
-            py = origen[1] + (destino[1] - origen[1]) * desplazamiento
-            ax.text(px, py + 0.8, etiqueta, fontsize=8, color=COLORES["borde"], fontweight="bold", ha="center")
-    ax.text(0.5, 79.2, "DataRetail 360 · Esquema estrella del proceso Ventas (capa Gold)",
+    for hecho, dimensiones in relaciones.items():
+        fx, fy, fw, fh = cajas[hecho]
+        for tabla in dimensiones:
+            x, y, w, h = cajas[tabla]
+            origen = _borde_hacia(cajas[tabla], (fx + fw / 2, fy + fh / 2))
+            destino = _borde_hacia(cajas[hecho], (x + w / 2, y + h / 2))
+            ax.add_patch(FancyArrowPatch(origen, destino, arrowstyle="-", lw=1.3, color=COLORES["borde"]))
+            for etiqueta, desplazamiento in (("1", 0.12), ("N", 0.88)):
+                px = origen[0] + (destino[0] - origen[0]) * desplazamiento
+                py = origen[1] + (destino[1] - origen[1]) * desplazamiento
+                ax.text(px, py + 0.8, etiqueta, fontsize=8, color=COLORES["borde"], fontweight="bold", ha="center")
+    ax.text(0.5, 102.5, "DataRetail 360 · Constelación de hechos Ventas + Inventario (capa Gold)",
             fontsize=13, fontweight="bold", color=COLORES["texto"], va="top")
-    ax.text(50.5, -2,
-            "Grano: una línea de producto de cada boleta o pedido.   PK clave primaria · FK clave foránea · "
-            "S2 atributo SCD tipo 2 · S3 atributo SCD tipo 3 · gris: columnas de linaje/auditoría",
-            fontsize=7.2, color=COLORES["linaje"], ha="center")
+    ax.text(0.5, 100.2, "Fecha, Producto y Sucursal son dimensiones conformadas: las comparten ambos hechos.",
+            fontsize=8.5, color=COLORES["linaje"], va="top")
+    ax.text(53, -2.2,
+            "Grano fact_ventas: una línea de producto de cada boleta o pedido.   "
+            "Grano fact_inventario: el stock de un producto, en una sucursal, al cierre de cada día.",
+            fontsize=7.4, color=COLORES["linaje"], ha="center")
+    ax.text(53, -4.2, "PK clave primaria · FK clave foránea · S2 atributo SCD tipo 2 · S3 atributo SCD tipo 3 · "
+            "gris: columnas de linaje/auditoría", fontsize=7.2, color=COLORES["linaje"], ha="center")
     fig.savefig(config.DOCS / "modelo_estrella.png", dpi=170, bbox_inches="tight", facecolor="white")
     plt.close(fig)
 
 
-def generar_drawio(esquema: dict, semantica: dict) -> None:
+def generar_drawio(esquema: dict, semantica: dict, relaciones: dict) -> None:
     """Exporta el modelo a diagrams.net (Draw.io) para editarlo en Draw.io."""
     escala, ancho = 13, 270
     celdas, aristas = [], []
     for tabla in TABLAS_MODELO:
         x, y = POSICIONES[tabla]
-        px, py = int(x * escala), int((80 - y) * escala)
+        px, py = int(x * escala), int((103 - y) * escala)
         color = COLORES["hecho"] if tabla.startswith("fact") else COLORES["dimension"]
         roles = semantica["tablas"][tabla]["columnas"]
         titulo = f"{tabla}&#xa;{escape(_subtitulo(tabla, semantica))}"
@@ -149,13 +166,14 @@ def generar_drawio(esquema: dict, semantica: dict) -> None:
             celdas.append(f'<mxCell id="{tabla}_{i}" value="{texto}" style="{estilo}" vertex="1" '
                           f'parent="{tabla}"><mxGeometry y="{44 + 22 * i}" width="{ancho}" height="22" '
                           f'as="geometry"/></mxCell>')
-        if tabla != "fact_ventas":
-            aristas.append(f'<mxCell id="rel_{tabla}" style="edgeStyle=entityRelationEdgeStyle;endArrow=ERmany;'
-                           f'startArrow=ERmandOne;endFill=0;startFill=0;" edge="1" parent="1" source="{tabla}" '
-                           f'target="fact_ventas"><mxGeometry relative="1" as="geometry"/></mxCell>')
-    xml = ('<mxfile host="app.diagrams.net"><diagram id="modelo-estrella" name="Modelo estrella Ventas">'
+    for hecho, dimensiones in relaciones.items():
+        for tabla in dimensiones:
+            aristas.append(f'<mxCell id="rel_{hecho}_{tabla}" style="edgeStyle=entityRelationEdgeStyle;'
+                           f'endArrow=ERmany;startArrow=ERmandOne;endFill=0;startFill=0;" edge="1" parent="1" '
+                           f'source="{tabla}" target="{hecho}"><mxGeometry relative="1" as="geometry"/></mxCell>')
+    xml = ('<mxfile host="app.diagrams.net"><diagram id="modelo-estrella" name="Constelación Ventas + Inventario">'
            '<mxGraphModel grid="1" gridSize="10" guides="1" connect="1" arrows="1" page="1" '
-           'pageWidth="1400" pageHeight="1100"><root><mxCell id="0"/><mxCell id="1" parent="0"/>'
+           'pageWidth="1450" pageHeight="1400"><root><mxCell id="0"/><mxCell id="1" parent="0"/>'
            + "".join(celdas + aristas) + "</root></mxGraphModel></diagram></mxfile>")
     (config.DOCS / "modelo_estrella.drawio").write_text(xml, encoding="utf-8")
 
@@ -168,14 +186,16 @@ def generar_diagrama_medallion() -> None:
     ax.axis("off")
     columnas = [
         ("FUENTES", "#6b7280", ["POS tiendas · CSV ';'", "E-commerce · JSON", "CRM · base SQLite",
-                                "Maestro productos · CSV", "Equivalencias SKU · CSV", "Sucursales/comunas · CSV"]),
+                                "Maestro productos · CSV", "Equivalencias SKU · CSV", "Sucursales/comunas · CSV",
+                                "Inventario diario · CSV"]),
         ("BRONZE", "#9a6b3f", ["Dato crudo, como texto", "Sin correcciones", "Contrato de columnas",
                                "Linaje y hash SHA-256", "Parquet por fuente y lote"]),
         ("SILVER", "#7b8794", ["Normaliza RUT y fechas", "Deduplica clientes", "Homologa SKU web → ERP",
-                               "22 reglas de calidad", "Tabla de rechazos", "Parquet por año/mes"]),
-        ("GOLD", "#b8860b", ["Esquema estrella (SQLite)", "SCD tipo 1, 2 y 3", "Carga idempotente",
-                             "9 validaciones (todo o nada)", "Vistas semánticas", "Agregado precalculado"]),
-        ("CONSUMO", "#1f3a5f", ["Dashboards en Power BI", "Vista vw_ventas", "Vista vw_kpi_mensual",
+                               "30 reglas de calidad", "Tabla de rechazos", "Parquet por año/mes"]),
+        ("GOLD", "#b8860b", ["Ventas + Inventario (SQLite)", "SCD tipo 1, 2 y 3", "Carga idempotente",
+                             "14 validaciones (todo o nada)", "Vistas semánticas", "Agregados precalculados"]),
+        ("CONSUMO", "#1f3a5f", ["Dashboards en Power BI", "vw_ventas · vw_kpi_mensual",
+                                "vw_inventario", "vw_kpi_inventario_mensual",
                                 "Capa semántica JSON", "NLQ con validación humana"]),
     ]
     ancho, separacion, x = 16.5, 4.0, 1.5
@@ -187,7 +207,7 @@ def generar_diagrama_medallion() -> None:
         ax.text(x + ancho / 2, 33.5, titulo, color="white", fontsize=12, fontweight="bold",
                 ha="center", va="center")
         for j, item in enumerate(items):
-            ax.text(x + 1, 28.2 - j * 4.1, ("• " if item else "") + item, fontsize=7.9,
+            ax.text(x + 1, 28.2 - j * 3.6, ("• " if item else "") + item, fontsize=7.9,
                     color=COLORES["texto"], va="center")
         if i < len(columnas) - 1:
             ax.add_patch(FancyArrowPatch((x + ancho + 0.4, 20), (x + ancho + separacion - 0.4, 20),
@@ -205,12 +225,44 @@ def generar_diagrama_medallion() -> None:
     plt.close(fig)
 
 
+def generar_diccionario(esquema: dict, semantica: dict) -> None:
+    """docs/diccionario_datos.md desde el esquema real de Gold y la capa semántica."""
+    l = [f"# Diccionario de datos · {semantica['modelo']}", "",
+         f"_Generado automáticamente desde el esquema de la capa Gold y `docs/capa_semantica.json` "
+         f"(versión {semantica['version']})._", ""]
+    for tabla in TABLAS_MODELO:
+        info = semantica["tablas"][tabla]
+        l += [f"## `{tabla}` — {info['tipo']}", ""]
+        if "grano" in info:
+            l += [f"**Grano:** {info['grano']}", ""]
+        l += [info["descripcion"], "", "| Columna | Tipo | Rol | Descripción | Sinónimos |", "|---|---|---|---|---|"]
+        for columna in esquema[tabla]:
+            meta = info["columnas"].get(columna["nombre"], {})
+            l.append(f"| `{columna['nombre']}` | {columna['tipo']} | {meta.get('rol', '')} | "
+                     f"{meta.get('descripcion', '')} | {', '.join(meta.get('sinonimos', []))} |")
+        l.append("")
+    l += ["## Métricas oficiales (capa semántica)", "",
+          "| Métrica | Definición | Fuente | SQL | Sinónimos |", "|---|---|---|---|---|"]
+    for nombre, m in semantica["metricas"].items():
+        l.append(f"| `{nombre}` | {m['descripcion']} | `{m['fuente']}` | `{m['sql']}` | "
+                 f"{', '.join(m.get('sinonimos', []))} |")
+    l += ["", "## Jerarquías", ""]
+    l += [f"- **{nombre}:** {' → '.join(niveles)}" for nombre, niveles in semantica["jerarquias"].items()]
+    l += ["", "## Reglas para asistentes de IA (NLQ / text-to-SQL)", ""]
+    l += [f"{i}. {regla}" for i, regla in enumerate(semantica["reglas_para_ia"], start=1)]
+    l += ["", "## Ejemplos de preguntas en lenguaje natural", ""]
+    for ejemplo in semantica["ejemplos_nlq"]:
+        l += [f"**{ejemplo['pregunta']}**", "", "```sql", ejemplo["sql"], "```", ""]
+    (config.DOCS / "diccionario_datos.md").write_text("\n".join(l), encoding="utf-8")
+
+
 def main() -> None:
     engine = gold.motor()
-    esquema, semantica = _esquema(engine), _semantica()
-    generar_diagrama_estrella(esquema, semantica)
-    generar_drawio(esquema, semantica)
+    esquema, semantica, relaciones = _esquema(engine), _semantica(), _relaciones(engine)
+    generar_diagrama_estrella(esquema, semantica, relaciones)
+    generar_drawio(esquema, semantica, relaciones)
     generar_diagrama_medallion()
+    generar_diccionario(esquema, semantica)
     engine.dispose()
     print("Documentación generada en", config.DOCS)
 

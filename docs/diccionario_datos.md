@@ -1,10 +1,10 @@
-# Diccionario de datos · DataRetail 360 · Ventas multicanal
+# Diccionario de datos · DataRetail 360 · Ventas multicanal e Inventario
 
-_Generado automáticamente desde el esquema de la capa Gold y `docs/capa_semantica.json` (versión 1.0)._
-
-**Grano del hecho:** Una fila de fact_ventas representa una línea de producto de una boleta (tienda física) o de un pedido (sitio web o app).
+_Generado automáticamente desde el esquema de la capa Gold y `docs/capa_semantica.json` (versión 1.1)._
 
 ## `fact_ventas` — Hecho transaccional
+
+**Grano:** Una fila de fact_ventas representa una línea de producto de una boleta (tienda física) o de un pedido (sitio web o app).
 
 Líneas vendidas en tiendas físicas y canales digitales. Las transacciones anuladas no se cargan; las devueltas se cargan con es_devolucion = 1.
 
@@ -26,6 +26,27 @@ Líneas vendidas en tiendas físicas y canales digitales. Las transacciones anul
 | `descuento` | INTEGER | Medida aditiva | Descuento aplicado a la línea, en pesos. |  |
 | `monto_neto` | INTEGER | Medida aditiva | monto_bruto − descuento, en pesos. Incluye líneas devueltas: para la venta neta oficial usar la métrica venta_neta. |  |
 | `es_devolucion` | INTEGER | Indicador | 1 si la línea fue devuelta por el cliente. |  |
+| `id_carga` | TEXT | Auditoría | Carga ETL que insertó la fila (linaje). |  |
+| `archivo_origen` | TEXT | Auditoría | Archivo fuente del que proviene la fila (linaje). |  |
+| `fila_origen` | INTEGER | Auditoría | Fila del archivo fuente (linaje hasta Bronze). |  |
+
+## `fact_inventario` — Hecho snapshot periódico (diario)
+
+**Grano:** Una fila de fact_inventario representa el stock de un producto, en una sucursal, al cierre de un día.
+
+Foto diaria del stock que informa el sistema de inventario de operaciones. Reutiliza las dimensiones conformadas fecha, producto y sucursal de Ventas. La bodega online corresponde a la sucursal virtual 'Tienda online'.
+
+| Columna | Tipo | Rol | Descripción | Sinónimos |
+|---|---|---|---|---|
+| `sk_inventario` | INTEGER | PK | Clave sustituta del registro de inventario. |  |
+| `sk_fecha` | INTEGER | FK | Día de la foto del stock (FK a dim_fecha, formato AAAAMMDD). |  |
+| `sk_producto` | INTEGER | FK | Producto (FK a dim_producto). |  |
+| `sk_sucursal` | INTEGER | FK | Sucursal o bodega (FK a dim_sucursal). |  |
+| `stock_cierre` | INTEGER | Medida semiaditiva | Unidades disponibles al cierre del día. Se suma entre productos y sucursales, nunca entre días: para un período se usa el último día. | stock, existencias, inventario disponible |
+| `unidades_recibidas` | INTEGER | Medida aditiva | Unidades que llegaron ese día por reposición o traspaso. | reposición, recepciones |
+| `unidades_vendidas` | INTEGER | Medida aditiva | Unidades que salieron ese día por venta (incluye las que después se devolvieron). Debe cuadrar con fact_ventas. | salidas, despachos |
+| `stock_minimo` | INTEGER | Medida no aditiva | Punto de reorden: con este stock o menos se pide reposición. | punto de reorden |
+| `es_quiebre` | INTEGER | Indicador | 1 si el stock de cierre es 0 (quiebre de stock). | quiebre, sin stock, agotado |
 | `id_carga` | TEXT | Auditoría | Carga ETL que insertó la fila (linaje). |  |
 | `archivo_origen` | TEXT | Auditoría | Archivo fuente del que proviene la fila (linaje). |  |
 | `fila_origen` | INTEGER | Auditoría | Fila del archivo fuente (linaje hasta Bronze). |  |
@@ -125,15 +146,17 @@ Canal por el que se realizó la venta.
 
 ## Métricas oficiales (capa semántica)
 
-| Métrica | Definición | SQL sobre `vw_ventas` | Sinónimos |
-|---|---|---|---|
-| `venta_neta` | Venta neta oficial: monto neto de las líneas no devueltas. Las anuladas no llegan a Gold. | `SUM(venta_neta)` | ventas, venta neta, ingresos, facturación |
-| `monto_devuelto` | Monto neto de las líneas devueltas. | `SUM(monto_devuelto)` | devoluciones |
-| `tasa_devolucion` | Proporción del monto vendido que fue devuelto. | `SUM(monto_devuelto) * 1.0 / NULLIF(SUM(venta_neta) + SUM(monto_devuelto), 0)` |  |
-| `unidades_vendidas` | Unidades de líneas no devueltas. | `SUM(CASE WHEN es_devolucion = 0 THEN unidades ELSE 0 END)` | unidades, cantidad vendida |
-| `documentos` | Número de boletas o pedidos con venta efectiva. | `COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END)` | transacciones, boletas, pedidos |
-| `ticket_promedio` | Venta neta dividida por el número de documentos con venta efectiva. | `SUM(venta_neta) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END), 0)` | ticket medio, valor promedio por compra |
-| `clientes_activos` | Clientes identificados con al menos una compra no devuelta en el período. | `COUNT(DISTINCT CASE WHEN es_cliente_anonimo = 0 AND es_devolucion = 0 THEN id_cliente END)` | clientes que compraron |
+| Métrica | Definición | Fuente | SQL | Sinónimos |
+|---|---|---|---|---|
+| `venta_neta` | Venta neta oficial: monto neto de las líneas no devueltas. Las anuladas no llegan a Gold. | `vw_ventas` | `SUM(venta_neta)` | ventas, venta neta, ingresos, facturación |
+| `monto_devuelto` | Monto neto de las líneas devueltas. | `vw_ventas` | `SUM(monto_devuelto)` | devoluciones |
+| `tasa_devolucion` | Proporción del monto vendido que fue devuelto. | `vw_ventas` | `SUM(monto_devuelto) * 1.0 / NULLIF(SUM(venta_neta) + SUM(monto_devuelto), 0)` |  |
+| `unidades_vendidas` | Unidades de líneas no devueltas. | `vw_ventas` | `SUM(CASE WHEN es_devolucion = 0 THEN unidades ELSE 0 END)` | unidades, cantidad vendida |
+| `documentos` | Número de boletas o pedidos con venta efectiva. | `vw_ventas` | `COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END)` | transacciones, boletas, pedidos |
+| `ticket_promedio` | Venta neta dividida por el número de documentos con venta efectiva. | `vw_ventas` | `SUM(venta_neta) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN es_devolucion = 0 THEN numero_documento END), 0)` | ticket medio, valor promedio por compra |
+| `clientes_activos` | Clientes identificados con al menos una compra no devuelta en el período. | `vw_ventas` | `COUNT(DISTINCT CASE WHEN es_cliente_anonimo = 0 AND es_devolucion = 0 THEN id_cliente END)` | clientes que compraron |
+| `tasa_quiebre` | Porcentaje de días-producto-sucursal que cerraron con stock 0 (KPI K3). | `vw_inventario` | `100.0 * SUM(es_quiebre) / NULLIF(COUNT(*), 0)` | quiebre de stock, tasa de quiebre, agotados, falta de stock |
+| `dias_cobertura` | Días que alcanza el stock del último día del período al ritmo de venta de los últimos 28 días (KPI K4). Bajo 7 hay riesgo de quiebre; sobre 60, baja rotación. | `agg_inventario_mes` | `SUM(stock_cierre_mes) * 28.0 / NULLIF(SUM(unidades_vendidas_28d), 0)` | cobertura, días de inventario, días de stock |
 
 ## Jerarquías
 
@@ -150,7 +173,9 @@ Canal por el que se realizó la venta.
 4. Las ventas digitales tienen region_sucursal = 'Canal online'.
 5. Excluir es_cliente_anonimo = 1 al contar clientes.
 6. Los nombres de canal válidos son 'Tienda física', 'Sitio web' y 'App móvil'.
-7. Toda respuesta generada debe pasar por el checklist de validación humana antes de comunicarse.
+7. Para inventario consultar vw_inventario, vw_kpi_inventario_mensual o agg_inventario_mes.
+8. stock_cierre es semiaditiva: nunca sumarla entre días; para un período usar el último día (stock_cierre_mes).
+9. Toda respuesta generada debe pasar por el checklist de validación humana antes de comunicarse.
 
 ## Ejemplos de preguntas en lenguaje natural
 
@@ -170,4 +195,10 @@ SELECT region_sucursal, SUM(venta_neta) * 1.0 / NULLIF(COUNT(DISTINCT CASE WHEN 
 
 ```sql
 SELECT COUNT(DISTINCT id_cliente) FROM vw_ventas WHERE segmento_cliente = 'VIP' AND anio = 2026 AND semestre = 1 AND es_cliente_anonimo = 0 AND es_devolucion = 0
+```
+
+**¿Qué sucursal tuvo la mayor tasa de quiebre de stock en el primer semestre de 2026?**
+
+```sql
+SELECT sucursal, ROUND(100.0 * SUM(es_quiebre) / COUNT(*), 2) AS tasa_quiebre FROM vw_inventario WHERE anio = 2026 AND semestre = 1 GROUP BY sucursal ORDER BY tasa_quiebre DESC LIMIT 1
 ```
