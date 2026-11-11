@@ -65,6 +65,7 @@ FUENTES = {
     "equivalencias_codigos": ("equivalencias_codigos.csv", _leer_csv),
     "sucursales": ("sucursales.csv", _leer_csv),
     "geografia_comunas": ("geografia_comunas.csv", _leer_csv),
+    "inventario_diario": ("inventario_diario.csv", _leer_csv),
 }
 
 

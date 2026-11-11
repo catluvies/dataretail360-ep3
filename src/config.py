@@ -70,8 +70,16 @@ CONTRATOS = {
         "cod_sucursal", "nombre", "tipo", "direccion", "comuna", "fecha_apertura",
     ],
     "geografia_comunas": ["comuna", "region", "zona", "latitud", "longitud"],
+    "inventario_diario": [
+        "fecha", "cod_sucursal", "cod_producto", "stock_cierre",
+        "unidades_recibidas", "unidades_vendidas", "stock_minimo",
+    ],
 }
 
 # Reglas de negocio con umbrales configurables.
 MONTO_MAXIMO_LINEA = 5_000_000  # una línea sobre este valor se considera fuera de rango
 CANTIDAD_MAXIMA_LINEA = 50
+# Inventario: el snapshot debe traer casi todas las combinaciones producto-sucursal-día,
+# y sus unidades vendidas deben cuadrar con fact_ventas (la diferencia son filas rechazadas).
+COMPLETITUD_MINIMA_INVENTARIO = 0.99
+TOLERANCIA_CUADRATURA_UNIDADES = 0.03

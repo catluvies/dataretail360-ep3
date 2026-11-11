@@ -8,6 +8,7 @@ problemas de calidad que el caso declara:
     CRM de marketing        -> crm_clientes.db         (base SQLite transaccional)
     ERP / maestro           -> maestro_productos.csv, equivalencias_codigos.csv
     Operaciones             -> sucursales.csv, geografia_comunas.csv
+    Inventario (bodegas)    -> inventario_diario.csv   (foto diaria del stock)
 
 Lote 1 = año 2025 (carga inicial). Lote 2 = primer semestre 2026 (carga
 incremental), con cambios en clientes, productos y sucursales que ejercitan
@@ -19,6 +20,7 @@ import json
 import sqlite3
 import unicodedata
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 
 import numpy as np
 import pandas as pd
@@ -72,6 +74,7 @@ SUCURSALES = [
 ]
 # Lote 2: nueva sucursal y corrección de dirección (SCD tipo 1).
 SUCURSAL_NUEVA_LOTE2 = ("SUC-13", "Iquique", "Mall", "Av. Héroes de la Concepción 2555", "Iquique", "2026-03-01")
+SUCURSAL_ONLINE = "SUC-99"  # bodega que despacha los pedidos web y app
 CORRECCION_DIRECCION_LOTE2 = ("SUC-04", "Av. Américo Vespucio 1001, local 112")
 
 CATALOGO = {
@@ -377,6 +380,8 @@ def _pos_ventas(lote: int, productos: pd.DataFrame, personas: pd.DataFrame) -> p
                     })
         dia += timedelta(days=1)
     df = pd.DataFrame(filas)
+    # Lo que realmente salió de cada tienda, antes de ensuciar la exportación: lo usa el inventario.
+    verdad = df.loc[df["estado"] != "ANULADA", ["momento", "cod_sucursal", "cod_producto", "cantidad"]].copy()
 
     # Formatos de fecha mezclados (validez).
     formato = rng.choice(3, size=len(df), p=[0.85, 0.10, 0.05])
@@ -413,10 +418,10 @@ def _pos_ventas(lote: int, productos: pd.DataFrame, personas: pd.DataFrame) -> p
     df.loc[df["nro_boleta"].isin(sin_sucursal), "cod_sucursal"] = ""
     # Líneas duplicadas por doble exportación (unicidad).
     df = pd.concat([df, df.sample(frac=0.005, random_state=lote)], ignore_index=True)
-    return df[config.CONTRATOS["pos_ventas"]]
+    return df[config.CONTRATOS["pos_ventas"]], verdad
 
 
-def _pedidos_web(lote: int, productos: pd.DataFrame, personas: pd.DataFrame) -> list[dict]:
+def _pedidos_web(lote: int, productos: pd.DataFrame, personas: pd.DataFrame) -> tuple[list[dict], pd.DataFrame]:
     rng = np.random.default_rng(config.SEMILLA + 50 + lote)
     inicio, fin = PERIODOS[lote]
     peso_producto = 1 / np.sqrt(productos["precio_lista"].to_numpy())
@@ -452,13 +457,146 @@ def _pedidos_web(lote: int, productos: pd.DataFrame, personas: pd.DataFrame) -> 
                 "estado": rng.choice(["PAGADO", "ANULADO", "DEVUELTO"], p=[0.94, 0.03, 0.03]),
             })
         dia += timedelta(days=1)
+    # Lo que realmente se despachó desde la bodega online, antes de ensuciar la exportación.
+    sku_a_codigo = dict(zip(productos["sku_web"], productos["cod_producto"]))
+    verdad = pd.DataFrame([
+        {"momento": pd.Timestamp(p["fecha"]), "cod_sucursal": SUCURSAL_ONLINE,
+         "cod_producto": sku_a_codigo[item["sku_web"]], "cantidad": item["cantidad"]}
+        for p in pedidos if p["estado"] != "ANULADO" for item in p["items"]])
     for i in rng.choice(len(pedidos), 5, replace=False):
         pedidos[i]["fecha"] = None
     for i in rng.choice(len(pedidos), 6, replace=False):
         pedidos[i]["items"][0]["precio_unitario"] *= -1
     for i in rng.choice(len(pedidos), 4, replace=False):
         pedidos[i]["items"][0]["cantidad"] = 0
-    return pedidos
+    return pedidos, verdad
+
+
+@lru_cache(maxsize=None)
+def _ventas_lote(lote: int) -> tuple[pd.DataFrame, list[dict], pd.DataFrame]:
+    """Ventas del lote: (exportación POS, pedidos web, unidades realmente despachadas)."""
+    productos, _ = _productos_lote(lote)
+    personas = _personas_lote(lote)
+    pos, verdad_pos = _pos_ventas(lote, productos, personas)
+    pedidos, verdad_web = _pedidos_web(lote, productos, personas)
+    return pos, pedidos, pd.concat([verdad_pos, verdad_web], ignore_index=True)
+
+
+# ------------------------------------------------------------------ inventario
+# Plazo de reposición en días según la zona de la sucursal (mínimo, máximo).
+PLAZO_REPOSICION = {"Centro": (2, 4), "Sur": (4, 7), "Norte": (5, 9), "Austral": (6, 10), "Online": (1, 3)}
+DIAS_CICLO = 30                 # cada pedido repone unos 30 días de demanda
+REFUERZO_FIN_DE_ANIO = 1.3      # stock objetivo extra entre el 20/11 y el 20/12
+ATRASOS_PROVEEDOR = 3           # por lote: subcategorías cuyo proveedor triplica el plazo durante un mes
+
+
+@lru_cache(maxsize=None)
+def _simular_inventario() -> pd.DataFrame:
+    """Stock al cierre de cada día, por producto y sucursal, de enero 2025 a junio 2026.
+
+    Simula la política de reposición (s, S) que usa operaciones, sin stock de seguridad:
+      * stock_minimo (s) = demanda esperada durante el plazo de reposición;
+      * cuando el stock de cierre llega a s, se pide hasta el objetivo S
+        (s + ~30 días de demanda) y el pedido llega tras el plazo de la zona;
+      * mientras espera, el stock puede llegar a 0: ese día es un quiebre.
+    Las ventas son las reales del modelo: si un cliente compra mientras hay un
+    pedido en camino, el pedido llegó esa mañana; si no hay pedido, se registra
+    un traspaso urgente. Así nunca se vende sin stock.
+    """
+    rng = np.random.default_rng(config.SEMILLA + 60)
+    inicio, fin = PERIODOS[1][0], PERIODOS[2][1]
+    dias = pd.date_range(inicio, fin).date
+    catalogo = _catalogo()
+    zona_de = {g[0]: g[2] for g in GEOGRAFIA}
+
+    vendidas = pd.concat([_ventas_lote(1)[2], _ventas_lote(2)[2]], ignore_index=True)
+    vendidas["i"] = (vendidas["momento"].dt.normalize() - pd.Timestamp(inicio)).dt.days
+    demanda = {clave: grupo.groupby("i")["cantidad"].sum()
+               for clave, grupo in vendidas.groupby(["cod_producto", "cod_sucursal"])}
+
+    subcategorias = sorted(catalogo["subcategoria"].unique())
+    atrasos = set()
+    for lote, (desde, hasta) in PERIODOS.items():
+        meses = range(desde.month, hasta.month + 1)
+        for sub in rng.choice(subcategorias, ATRASOS_PROVEEDOR, replace=False):
+            atrasos.add((sub, desde.year, int(rng.choice(meses))))
+
+    filas = []
+    for prod in catalogo.itertuples():
+        desde_producto = PERIODOS[2][0] if prod.nuevo_lote2 else inicio
+        for cod_suc, _, _, _, comuna, apertura in SUCURSALES + [SUCURSAL_NUEVA_LOTE2]:
+            desde = max(desde_producto, date.fromisoformat(apertura))
+            i0 = (desde - inicio).days
+            ventas = np.zeros(len(dias), dtype=np.int64)
+            serie = demanda.get((prod.cod_producto, cod_suc))
+            if serie is not None:
+                ventas[serie.index.to_numpy()] = serie.to_numpy()
+            tasa = max(ventas[i0:].sum() / (len(dias) - i0), 0.01)
+            plazo_min, plazo_max = PLAZO_REPOSICION[zona_de[comuna]]
+            minimo = int(round(tasa * (plazo_min + plazo_max) / 2))
+            objetivo = minimo + max(1, int(np.ceil(tasa * DIAS_CICLO)))
+            stock, llegada, pedido = objetivo, None, 0
+            for i in range(i0, len(dias)):
+                dia, venta, recibidas = dias[i], int(ventas[i]), 0
+                if llegada is not None and (i >= llegada or stock < venta):
+                    stock, recibidas, llegada = stock + pedido, pedido, None
+                if stock < venta:  # traspaso urgente desde otra sucursal
+                    recibidas += venta - stock
+                    stock = venta
+                stock -= venta
+                if llegada is None and stock <= minimo:
+                    meta = objetivo * (REFUERZO_FIN_DE_ANIO if date(dia.year, 11, 20) <= dia <= date(dia.year, 12, 20) else 1)
+                    pedido = max(int(np.ceil(meta)) - stock, 1)
+                    plazo = int(rng.integers(plazo_min, plazo_max + 1))
+                    if (prod.subcategoria, dia.year, dia.month) in atrasos:
+                        plazo *= 3
+                    llegada = i + plazo
+                filas.append((dia, cod_suc, prod.cod_producto, stock, recibidas, venta, minimo))
+    return pd.DataFrame(filas, columns=["fecha", "cod_sucursal", "cod_producto", "stock_cierre",
+                                        "unidades_recibidas", "unidades_vendidas", "stock_minimo"])
+
+
+def _inventario_lote(lote: int, productos: pd.DataFrame) -> pd.DataFrame:
+    """Exportación diaria del sistema de inventario, con los problemas de calidad del caso."""
+    rng = np.random.default_rng(config.SEMILLA + 70 + lote)
+    inicio, fin = PERIODOS[lote]
+    sim = _simular_inventario()
+    df = sim[(sim["fecha"] >= inicio) & (sim["fecha"] <= fin)].reset_index(drop=True)
+
+    # Inventario incompleto: dos sucursales no informan su stock durante tres días seguidos.
+    tiendas = sorted(df["cod_sucursal"].unique())
+    faltan = pd.Series(False, index=df.index)
+    for cod in rng.choice(tiendas, 2, replace=False):
+        primer = inicio + timedelta(days=int(rng.integers(10, (fin - inicio).days - 10)))
+        faltan |= (df["cod_sucursal"] == cod) & df["fecha"].between(primer, primer + timedelta(days=2))
+    df = df[~faltan].reset_index(drop=True)
+
+    # La bodega online informa con el SKU del e-commerce, no con el código del ERP.
+    online = df["cod_sucursal"] == SUCURSAL_ONLINE
+    df.loc[online, "cod_producto"] = df.loc[online, "cod_producto"].map(
+        dict(zip(productos["cod_producto"], productos["sku_web"])))
+
+    # Fechas exportadas en dos formatos (validez).
+    fecha = pd.to_datetime(df["fecha"])
+    df["fecha"] = np.where(rng.random(len(df)) < 0.9, fecha.dt.strftime("%Y-%m-%d"), fecha.dt.strftime("%d/%m/%Y"))
+    df = df.astype({c: str for c in ["stock_cierre", "unidades_recibidas", "unidades_vendidas", "stock_minimo"]})
+    # Códigos de sucursal con minúsculas y espacios (consistencia).
+    sucio = rng.random(len(df)) < 0.02
+    df.loc[sucio, "cod_sucursal"] = df.loc[sucio, "cod_sucursal"].str.lower() + " "
+
+    def marcar(n, columna, valor):
+        idx = rng.choice(df.index, n, replace=False)
+        df.loc[idx, columna] = valor(idx) if callable(valor) else valor
+
+    marcar(10, "fecha", lambda idx: [rng.choice([f"{inicio.year}-02-30", f"31/09/{inicio.year}", "sin fecha"])
+                                     for _ in idx])
+    # Inventario desactualizado: stock negativo por ventas registradas antes de la recepción.
+    marcar(40, "stock_cierre", lambda idx: [f"-{int(rng.integers(1, 6))}" for _ in idx])
+    marcar(15, "stock_cierre", "N/D")
+    marcar(8, "cod_producto", "P9999")
+    # Filas duplicadas por doble exportación (unicidad).
+    df = pd.concat([df, df.sample(frac=0.003, random_state=lote)], ignore_index=True)
+    return df[config.CONTRATOS["inventario_diario"]]
 
 
 # ---------------------------------------------------------------- escritura
@@ -488,10 +626,11 @@ def generar(lote: int) -> None:
     with sqlite3.connect(ruta_crm) as conexion:
         crm.to_sql("clientes", conexion, index=False)
 
-    _pos_ventas(lote, productos, personas).to_csv(destino / "pos_ventas_tiendas.csv", sep=";", index=False)
-    pedidos = _pedidos_web(lote, productos, personas)
+    pos, pedidos, _ = _ventas_lote(lote)
+    pos.to_csv(destino / "pos_ventas_tiendas.csv", sep=";", index=False)
     (destino / "ecommerce_pedidos.json").write_text(
         json.dumps(pedidos, ensure_ascii=False, indent=1), encoding="utf-8")
+    _inventario_lote(lote, productos).to_csv(destino / "inventario_diario.csv", index=False)
 
 
 def main() -> None:

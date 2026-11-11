@@ -12,6 +12,8 @@ import pandas as pd
 
 PATRON_EMAIL = r"^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$"
 FORMATOS_FECHA = ["%d/%m/%Y %H:%M", "%Y-%m-%d %H:%M:%S", "%d-%m-%Y %H:%M", "%Y-%m-%dT%H:%M:%S"]
+FORMATOS_FECHA_DIA = ["%Y-%m-%d", "%d/%m/%Y"]  # fuentes con fecha sin hora (inventario)
+PATRON_SKU_WEB = r"^[A-Z]{3}-\d{4}-W$"
 EQUIVALENCIAS_ESTADO = {
     "COMPLETADA": "COMPLETADA", "PAGADO": "COMPLETADA",
     "ANULADA": "ANULADA", "ANULADO": "ANULADA",
@@ -66,11 +68,11 @@ def nombre_propio(serie: pd.Series) -> pd.Series:
     return normalizar_texto(serie).str.title()
 
 
-def parsear_fecha(serie: pd.Series) -> pd.Series:
+def parsear_fecha(serie: pd.Series, formatos: list[str] = FORMATOS_FECHA) -> pd.Series:
     """Prueba cada formato conocido; lo que no calza con ninguno queda NaT."""
     texto = serie.astype("string").str.strip()
     resultado = pd.Series(pd.NaT, index=serie.index, dtype="datetime64[us]")
-    for formato in FORMATOS_FECHA:
+    for formato in formatos:
         pendiente = resultado.isna()
         if not pendiente.any():
             break
