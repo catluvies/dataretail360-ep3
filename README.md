@@ -50,8 +50,8 @@ entre los dos hechos). El tercero regenera los diagramas y el diccionario de `do
 esquema real de Gold.
 Después se puede abrir `notebooks/EP3_evidencias.ipynb` para ver la evidencia.
 
-Ojo: `generar_fuentes` sobrescribe `data/fuentes/`. Si editaste alguna fuente a mano (por ejemplo,
-el CRM para una demo), respáldala antes.
+`generar_fuentes` sobrescribe `data/fuentes/`: los cambios hechos a mano en una fuente (por ejemplo,
+en el CRM) se pierden si no se respaldan antes.
 
 ### Altas, cambios y bajas de clientes (SCD tipo 2)
 
