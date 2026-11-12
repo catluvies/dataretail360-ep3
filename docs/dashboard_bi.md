@@ -9,9 +9,9 @@ Guía para construir el dashboard en la herramienta BI a partir de nuestra capa 
 ## 0. Herramienta
 
 Usamos **Power BI**, la herramienta que elegimos en la EP1 y que la EP3 deja como siguiente paso.
-Power BI Desktop solo funciona en **Windows**: en Mac, usen un PC del laboratorio o una máquina virtual.
+Power BI Desktop solo funciona en **Windows**: en Mac hay que usar un PC del laboratorio o una máquina virtual.
 Si no hay Windows disponible, la sección 8 explica cómo hacerlo en **Looker Studio**, que funciona en el
-navegador. Elijan una sola herramienta para todo el equipo.
+navegador. El dashboard se construye en una sola de las dos herramientas.
 
 ## 1. Preparar los datos
 
@@ -200,7 +200,7 @@ decimales; `Var Venta Neta %`, `Logro K1 %`, `Logro K2 %` y `Tasa de Quiebre` co
 **Colores** (la misma paleta validada de los gráficos de la actividad 3.2): azul `#2a78d6` para el KPI
 principal, naranjo `#eb6834` para destacar el problema (barras de la zona Norte, línea "sin Iquique"),
 grises `#898781` y `#c3c2b7` para el contexto y rojo `#d03b3b` **solo** para la línea de alerta. En las
-barras, usen formato condicional por `dim_sucursal[zona]`: Norte en naranjo y el resto en gris.
+barras se usa formato condicional por `dim_sucursal[zona]`: Norte en naranjo y el resto en gris.
 En las tarjetas, el estado va con texto ("En meta", "Observación", "Alerta"), no solo con color.
 
 ## 5. Cifras de control: el dashboard debe mostrar esto
@@ -225,7 +225,7 @@ Por mes (2026):
 | Mayo | 370,4 | $254.764 | 6,78% | 34,6 |
 | Junio | 370,7 | $257.756 | 6,58% | 33,2 |
 
-Si algo no cuadra, revisen en este orden: (1) las relaciones del paso 2; (2) que `dim_fecha` esté
+Si algo no cuadra, se revisa en este orden: (1) las relaciones del paso 2; (2) que `dim_fecha` esté
 marcada como tabla de fechas; (3) el filtro `es_devolucion = 0` en `Venta Neta` y `Documentos`.
 
 ## 6. Publicar y compartir
@@ -262,7 +262,7 @@ tabla de detalle (se puede llegar a ella con *obtener detalles* desde las barras
     | `quiebre_productos` | Tasa de quiebre | `SUM(dias_quiebre) / SUM(dias_informados)` |
 
 4. **Cuidado con K4:** Looker no sabe que el stock es semiaditivo. La tarjeta de K4 tiene que filtrar un
-    solo mes (filtro del gráfico `anio_mes = 2026-06`). Si suman varios meses, la cobertura sale inflada.
+    solo mes (filtro del gráfico `anio_mes = 2026-06`). Si se suman varios meses, la cobertura sale inflada.
 5. La comparación con el año anterior de K1 y K2 se activa en la tarjeta: *Período de comparación → Año anterior*.
 6. Los filtros `zona` y `categoria` tienen el mismo nombre en las tres fuentes. Si un control no filtra los
-    gráficos de otra fuente, agreguen un control por fuente o combinen las fuentes (*Combinar datos*).
+    gráficos de otra fuente, se agrega un control por fuente o se combinan las fuentes (*Combinar datos*).
