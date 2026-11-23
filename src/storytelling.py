@@ -2,7 +2,7 @@
 
 Todo se calcula desde la capa semántica de Gold (vw_ventas y agg_inventario_mes),
 con las mismas fórmulas de la Ficha de KPI. El notebook 3.2 y la app Streamlit
-usan este módulo, así ambos muestran las mismas cifras que el dashboard BI.
+usan este módulo, así ambos muestran las mismas cifras.
 
     K1 Venta neta mensual        fact_ventas
     K2 Ticket promedio           fact_ventas
@@ -18,10 +18,10 @@ import plotly.graph_objects as go
 from sqlalchemy import create_engine, text
 
 from . import config
-from .exportar_bi import CONSULTAS_LOOKER
 
 # Umbrales de la Ficha de KPI (docs/Ficha_KPI_DataRetail360.xlsx).
 META_CRECIMIENTO_VENTA = 5.0        # K1: % sobre el mismo período del año anterior
+META_CRECIMIENTO_TICKET = 3.0       # K2: % sobre el mismo período del año anterior
 META_QUIEBRE, ALERTA_QUIEBRE = 5.0, 8.0                   # K3: %
 COBERTURA_MIN, COBERTURA_MAX = 15, 45                     # K4: días
 COBERTURA_RIESGO, COBERTURA_SOBRESTOCK = 7, 60
@@ -83,11 +83,24 @@ def cargar_inventario(engine) -> pd.DataFrame:
 
 
 def cargar_quiebre_productos(engine) -> pd.DataFrame:
-    """Días en quiebre por producto, sucursal y mes.
-
-    Es la misma consulta que alimenta la tabla de detalle del dashboard BI (src/exportar_bi.py).
-    """
-    detalle = pd.read_sql(text(CONSULTAS_LOOKER["quiebre_productos"]), engine)
+    """Días en quiebre por producto, sucursal y mes: alimenta la tabla de detalle del dashboard."""
+    detalle = pd.read_sql(text("""
+        WITH base AS (
+            SELECT f.sk_producto, f.sk_sucursal, f.stock_cierre, f.unidades_vendidas, f.es_quiebre,
+                   f.stock_minimo, d.anio_mes,
+                   ROW_NUMBER() OVER (PARTITION BY f.sk_producto, f.sk_sucursal, d.anio_mes
+                                      ORDER BY f.sk_fecha DESC) AS orden_desde_fin
+            FROM fact_inventario f JOIN dim_fecha d ON d.sk_fecha = f.sk_fecha)
+        SELECT b.anio_mes, s.nombre_sucursal AS sucursal, s.region, s.zona, p.cod_producto,
+               p.nombre_producto AS producto, p.categoria, p.subcategoria,
+               COUNT(*) AS dias_informados, SUM(b.es_quiebre) AS dias_quiebre,
+               SUM(CASE WHEN b.orden_desde_fin = 1 THEN b.stock_cierre END) AS stock_cierre_mes,
+               MAX(b.stock_minimo) AS stock_minimo, SUM(b.unidades_vendidas) AS unidades_vendidas
+        FROM base b
+        JOIN dim_sucursal s ON s.sk_sucursal = b.sk_sucursal
+        JOIN dim_producto p ON p.sk_producto = b.sk_producto
+        GROUP BY b.anio_mes, s.nombre_sucursal, s.region, s.zona, p.cod_producto, p.nombre_producto,
+                 p.categoria, p.subcategoria"""), engine)
     detalle["anio"] = detalle["anio_mes"].str[:4].astype(int)
     detalle["mes"] = detalle["anio_mes"].str[5:].astype(int)
     return detalle
@@ -156,14 +169,6 @@ def nombre_periodo(mes_desde: int = 1, mes_hasta: int = 6, corto: bool = False) 
     return f"período {MESES_LARGOS[mes_desde - 1]}–{MESES_LARGOS[mes_hasta - 1]}"
 
 
-def meta_k2(ventas: pd.DataFrame, anio: int, mes: int) -> float:
-    """Meta del ticket de un mes: promedio de los 3 meses anteriores + 3% (Ficha de KPI)."""
-    orden = ventas["anio"] * 12 + ventas["mes"]
-    tickets = [k2_ticket(ventas[orden == anio * 12 + mes - n]) for n in (1, 2, 3)]
-    tickets = [t for t in tickets if pd.notna(t)]           # meses sin ventas
-    return 1.03 * sum(tickets) / len(tickets) if tickets else float("nan")
-
-
 def estado_logro(logro: float) -> str:
     """K1 y K2 (logro = valor / meta): alerta bajo el 90% de la meta (Ficha de KPI)."""
     if pd.isna(logro):
@@ -189,8 +194,7 @@ def kpis_periodo(ventas: pd.DataFrame, inventario: pd.DataFrame, anio: int = 202
                  mes_desde: int = 1, mes_hasta: int = 6) -> dict:
     """Los cuatro KPIs de un período contra el mismo período del año anterior, con meta y estado.
 
-    Los datos pueden venir filtrados (zona, categoría, canal), pero con todos sus meses:
-    la meta de K2 usa los 3 meses anteriores al último mes del período.
+    Los datos pueden venir filtrados (zona, categoría, canal).
     `variacion` es % en K1 y K2, puntos porcentuales en K3 y días en K4.
     """
     actual_v, previo_v = (periodo(ventas, a, mes_desde, mes_hasta) for a in (anio, anio - 1))
@@ -207,10 +211,9 @@ def kpis_periodo(ventas: pd.DataFrame, inventario: pd.DataFrame, anio: int = 202
     # K1: meta = año anterior + 5%.
     logro_k1 = venta / (venta_previa * (1 + META_CRECIMIENTO_VENTA / 100)) if venta_previa else nan
     ticket, ticket_previo = k2_ticket(actual_v), k2_ticket(previo_v)
-    # K2: el último mes del período contra el promedio de sus 3 meses anteriores + 3%.
-    ultimo = int(actual_v["mes"].max()) if not actual_v.empty else mes_hasta
-    meta_ticket = meta_k2(ventas, anio, ultimo)
-    logro_k2 = k2_ticket(actual_v[actual_v["mes"] == ultimo]) / meta_ticket
+    # K2: meta = año anterior + 3%.
+    logro_k2 = (ticket / (ticket_previo * (1 + META_CRECIMIENTO_TICKET / 100))
+                if ticket_previo and pd.notna(ticket_previo) else nan)
     quiebre, quiebre_previo = k3_quiebre(actual_i), k3_quiebre(previo_i)
     cobertura, cobertura_previa = k4_cobertura(actual_i), k4_cobertura(previo_i)
 
@@ -224,8 +227,8 @@ def kpis_periodo(ventas: pd.DataFrame, inventario: pd.DataFrame, anio: int = 202
                    estado=estado_logro(logro_k1)),
         "K2": dict(nombre="Ticket promedio", hecho="fact_ventas", valor=ticket, texto=texto(ticket, pesos),
                    texto_previo=texto(ticket_previo, pesos), variacion=crecimiento(ticket, ticket_previo),
-                   meta=f"{MESES[ultimo - 1]}: ≥ {texto(meta_ticket, pesos)} (3 meses previos + 3%)",
-                   logro=logro_k2, estado=estado_logro(logro_k2)),
+                   meta=f"≥ +{num(META_CRECIMIENTO_TICKET)}% vs año anterior", logro=logro_k2,
+                   estado=estado_logro(logro_k2)),
         "K3": dict(nombre="Tasa de quiebre de stock", hecho="fact_inventario", valor=quiebre,
                    texto=texto(quiebre, lambda q: pct(q, 2)), texto_previo=texto(quiebre_previo, lambda q: pct(q, 2)),
                    variacion=quiebre - quiebre_previo, meta=f"≤ {num(META_QUIEBRE)}%",

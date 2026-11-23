@@ -194,7 +194,7 @@ def generar_diagrama_medallion() -> None:
                                "30 reglas de calidad", "Tabla de rechazos", "Parquet por año/mes"]),
         ("GOLD", "#b8860b", ["Ventas + Inventario (SQLite)", "SCD tipo 1, 2 y 3", "Carga idempotente",
                              "14 validaciones (todo o nada)", "Vistas semánticas", "Agregados precalculados"]),
-        ("CONSUMO", "#1f3a5f", ["Dashboards en Power BI", "vw_ventas · vw_kpi_mensual",
+        ("CONSUMO", "#1f3a5f", ["Dashboard en Streamlit", "vw_ventas · vw_kpi_mensual",
                                 "vw_inventario", "vw_kpi_inventario_mensual",
                                 "Capa semántica JSON", "NLQ con validación humana"]),
     ]

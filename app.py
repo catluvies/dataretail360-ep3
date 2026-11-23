@@ -1,6 +1,6 @@
-"""DataRetail 360 · App de storytelling (Actividad 3.2).
+"""DataRetail 360 · Dashboard de ventas e inventario.
 
-Es la versión en Python del dashboard BI (docs/excalidraw/dashboard_bi_wireframe.png):
+Sigue el wireframe de docs/excalidraw/dashboard_bi_wireframe.png:
 cuatro filtros, los cuatro KPIs oficiales (dos de fact_ventas y dos de fact_inventario),
 los tres gráficos de la narrativa, la tabla de productos en quiebre y la narrativa SCI.
 Los cálculos vienen de src/storytelling.py, igual que en el notebook.
@@ -32,7 +32,7 @@ st.title("DataRetail 360 · Ventas e inventario")
 st.caption(f"Cada período se compara con el mismo período de {ANIO - 1} · Capa Gold (vw_ventas, "
            "agg_inventario_mes) · KPIs de la Ficha de KPI: dos por tabla de hechos")
 
-# Filtros en una fila, arriba de todo (los mismos cuatro del dashboard BI).
+# Filtros en una fila, arriba de todo (los cuatro del wireframe).
 c1, c2, c3, c4 = st.columns(4)
 desde, hasta = PERIODOS[c1.selectbox("Período", list(PERIODOS))]
 zonas = c2.multiselect("Zona", sorted(inventario["zona"].unique()), placeholder="Todas las zonas")
@@ -71,8 +71,8 @@ tarjetas = {
                color="normal", ayuda=f"Meta: ≥ +{sty.num(sty.META_CRECIMIENTO_VENTA)}% sobre el mismo "
                                      "período del año anterior · alerta bajo el 90% de la meta"),
     "K2": dict(titulo="K2 · Ticket promedio", variacion=lambda x: f"{sty.pct(x, signo=True)} vs {ANIO - 1}",
-               color="normal", ayuda="Venta neta / documentos de venta. Meta del último mes del período: "
-                                     "≥ promedio de los 3 meses anteriores + 3%"),
+               color="normal", ayuda=f"Venta neta / documentos de venta. Meta: ≥ +{sty.num(sty.META_CRECIMIENTO_TICKET)}% "
+                                     "sobre el mismo período del año anterior · alerta bajo el 90% de la meta"),
     "K3": dict(titulo="K3 · Tasa de quiebre", variacion=lambda x: diferencia(x, 2, "pts"), color="inverse",
                ayuda=f"% de días-producto-sucursal que cerraron con stock 0. Meta: ≤ {sty.num(sty.META_QUIEBRE)}% "
                      f"· alerta sobre {sty.num(sty.ALERTA_QUIEBRE)}%"),

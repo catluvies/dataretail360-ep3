@@ -18,5 +18,5 @@ logs/*.log
 
 .DS_Store
 
-# Archivos para la herramienta BI (se regeneran con python -m src.exportar_bi)
+# Exportaciones locales a CSV
 data/bi/
