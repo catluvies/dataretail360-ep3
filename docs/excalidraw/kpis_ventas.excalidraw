@@ -1196,7 +1196,7 @@
    "type": "text",
    "x": 210,
    "y": 663.75,
-   "width": 356.40000000000003,
+   "width": 69.3,
    "height": 22.5,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -1219,8 +1219,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "Mensual, tras una carga Gold EXITOSA",
-   "originalText": "Mensual, tras una carga Gold EXITOSA",
+   "text": "Mensual",
+   "originalText": "Mensual",
    "fontSize": 18,
    "fontFamily": 1,
    "textAlign": "left",
@@ -1562,7 +1562,7 @@
    "type": "text",
    "x": 1004,
    "y": 332,
-   "width": 345.95000000000005,
+   "width": 346.0,
    "height": 42.5,
    "angle": 0,
    "strokeColor": "#495057",
@@ -1585,8 +1585,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "1er sem. 2026 · +1,8% vs 2025 · junio\n$257.756 = 95,7% de la meta",
-   "originalText": "1er sem. 2026 · +1,8% vs 2025 · junio\n$257.756 = 95,7% de la meta",
+   "text": "1er sem. 2026 · +1,8% vs 2025 · logro\n98,8% de la meta",
+   "originalText": "1er sem. 2026 · +1,8% vs 2025 · logro\n98,8% de la meta",
    "fontSize": 17,
    "fontFamily": 1,
    "textAlign": "left",
@@ -1638,10 +1638,10 @@
   {
    "id": "line-34f075212",
    "type": "line",
-   "x": 1492.9411764705883,
-   "y": 309.6814055188232,
-   "width": 247.05882352941177,
-   "height": 48.41081507351262,
+   "x": 1651.8,
+   "y": 313.3,
+   "width": 88.2,
+   "height": 75.0,
    "angle": 0,
    "strokeColor": "#868e96",
    "backgroundColor": "transparent",
@@ -1669,60 +1669,24 @@
      0.0
     ],
     [
-     17.64705882352942,
-     -0.4171439762131257
+     17.6,
+     22.9
     ],
     [
-     35.294117647058826,
-     5.686694515515384
+     35.3,
+     -33.8
     ],
     [
-     52.94117647058823,
-     15.000761933787828
+     52.9,
+     -1.3
     ],
     [
-     70.58823529411765,
-     22.00904482658015
+     70.6,
+     41.2
     ],
     [
-     88.23529411764707,
-     23.327911023492597
-    ],
-    [
-     105.88235294117646,
-     36.90535983158372
-    ],
-    [
-     123.52941176470588,
-     38.471493197814965
-    ],
-    [
-     141.1764705882353,
-     31.493557449010275
-    ],
-    [
-     158.8235294117647,
-     24.738936309770885
-    ],
-    [
-     176.47058823529412,
-     22.815543314157594
-    ],
-    [
-     194.11764705882354,
-     12.8863532293745
-    ],
-    [
-     211.76470588235293,
-     1.258569633538329
-    ],
-    [
-     229.41176470588238,
-     -9.939321875697658
-    ],
-    [
-     247.05882352941177,
-     -7.862573138678826
+     88.2,
+     -5.8
     ]
    ],
    "lastCommittedPoint": null,
@@ -1735,7 +1699,7 @@
    "id": "text-254b1aca0a",
    "type": "text",
    "x": 1756.0,
-   "y": 291.81883238014444,
+   "y": 297.5,
    "width": 30.800000000000004,
    "height": 17.5,
    "angle": 0,
@@ -2307,7 +2271,7 @@
    "type": "text",
    "x": 1130,
    "y": 572.25,
-   "width": 554.4,
+   "width": 594.0,
    "height": 45.0,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -2330,8 +2294,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "≥ promedio de los 3 meses anteriores + 3% (junio 2026: ≥\n$269.209)",
-   "originalText": "≥ promedio de los 3 meses anteriores + 3% (junio 2026: ≥\n$269.209)",
+   "text": "≥ ticket del mismo mes del año anterior + 3% (mismo criterio\nque K1)",
+   "originalText": "≥ ticket del mismo mes del año anterior + 3% (mismo criterio\nque K1)",
    "fontSize": 18,
    "fontFamily": 1,
    "textAlign": "left",
@@ -2463,7 +2427,7 @@
    "type": "text",
    "x": 1130,
    "y": 663.75,
-   "width": 356.40000000000003,
+   "width": 69.3,
    "height": 22.5,
    "angle": 0,
    "strokeColor": "#1e1e1e",
@@ -2486,8 +2450,8 @@
    "updated": 1,
    "link": null,
    "locked": false,
-   "text": "Mensual, tras una carga Gold EXITOSA",
-   "originalText": "Mensual, tras una carga Gold EXITOSA",
+   "text": "Mensual",
+   "originalText": "Mensual",
    "fontSize": 18,
    "fontFamily": 1,
    "textAlign": "left",
