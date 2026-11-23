@@ -75,15 +75,11 @@ streamlit run app.py              # app con los 4 KPIs, los 3 gráficos, la tabl
 ```
 
 `notebooks/3.2_storytelling_ventas_inventario.ipynb` tiene los tres gráficos con título-mensaje y la
-narrativa SCI. Todos los cálculos están en `src/storytelling.py`, así el notebook, la app y el
-dashboard usan una sola definición de cada KPI.
+narrativa SCI. Todos los cálculos están en `src/storytelling.py`, así el notebook y la app usan una
+sola definición de cada KPI.
 
-## Dashboard BI (guía 3.2.3)
+## Dashboard
 
-```bash
-python -m src.exportar_bi         # CSV de Gold en data/bi/: modelo estrella (Power BI) y tablas planas (Looker Studio)
-```
-
-`docs/dashboard_bi.md` explica cómo armarlo: relaciones, medidas DAX de los 4 KPIs, visuales, filtros
-y las cifras de control que el dashboard debe mostrar. El wireframe está en
+El dashboard es la app de Streamlit (`app.py`). `docs/dashboard_bi.md` describe qué muestra, por qué
+está ordenado así y las cifras de control para revisarlo. El wireframe está en
 `docs/excalidraw/dashboard_bi_wireframe.png`, y los diagramas y fichas visuales de KPIs, en `docs/excalidraw/`.
