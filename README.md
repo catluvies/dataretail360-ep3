@@ -29,7 +29,7 @@ KPIs oficiales (`docs/Ficha_KPI_DataRetail360.xlsx`), dos por hecho:
 |---|---|
 | `src/` | Código del pipeline: generador de datos, capas Bronze, Silver y Gold, validaciones |
 | `sql/` | Esquema de Gold y vistas para consultar ventas e inventario |
-| `notebooks/` | `EP3_evidencias.ipynb`: el pipeline ejecutado paso a paso, con sus resultados · `3.2_storytelling_ventas_inventario.ipynb`: gráficos y narrativa |
+| `notebooks/` | `EP3_evidencias.ipynb`: el pipeline ejecutado paso a paso, con sus resultados · `3.2_storytelling_ventas_inventario.ipynb`: gráficos y narrativa · `EP5_validacion_ia.ipynb`: consultas en lenguaje natural con IA, comprobadas contra la base |
 | `docs/` | Modelo (imagen y archivo de Draw.io), arquitectura, capa semántica, diccionario y Ficha de KPI |
 
 ## Cómo ejecutarlo
