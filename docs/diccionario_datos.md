@@ -1,6 +1,6 @@
 # Diccionario de datos · DataRetail 360 · Ventas multicanal e Inventario
 
-_Generado automáticamente desde el esquema de la capa Gold y `docs/capa_semantica.json` (versión 1.1)._
+_Generado automáticamente desde el esquema de la capa Gold y `docs/capa_semantica.json` (versión 1.2)._
 
 ## `fact_ventas` — Hecho transaccional
 
@@ -143,6 +143,17 @@ Canal por el que se realizó la venta.
 | `cod_canal` | TEXT | Clave de negocio | Código del canal: TIENDA, WEB, APP. |  |
 | `nombre_canal` | TEXT | Atributo | Tienda física, Sitio web o App móvil. | canal, canal de venta |
 | `tipo_canal` | TEXT | Jerarquía canal | Presencial o Digital. | online, físico |
+
+## Vistas de consumo
+
+Las consultas de análisis y de IA se hacen sobre estas vistas y tablas agregadas.
+
+- **`vw_ventas`:** sk_venta, fecha, anio, semestre, trimestre, mes, nombre_mes, anio_mes, nombre_dia, es_fin_de_semana, es_festivo, hora, cod_canal, canal, tipo_canal, cod_sucursal, sucursal, tipo_sucursal, comuna_sucursal, region_sucursal, zona_sucursal, cod_producto, producto, marca, linea_producto, subcategoria, categoria, categoria_anterior, id_cliente, segmento_cliente, region_cliente, es_cliente_anonimo, fuente_origen, numero_documento, nro_linea, unidades, precio_unitario, monto_bruto, descuento, monto_neto, es_devolucion, venta_neta, monto_devuelto, id_carga
+- **`vw_kpi_mensual`:** anio_mes, canal, venta_neta, monto_devuelto, unidades_vendidas, documentos, ticket_promedio, clientes_activos
+- **`agg_ventas_mes_region`:** anio_mes, region, canal, venta_neta, monto_devuelto, unidades, documentos, ticket_promedio, fecha_refresco
+- **`vw_inventario`:** sk_inventario, fecha, anio, semestre, trimestre, mes, nombre_mes, anio_mes, cod_sucursal, sucursal, tipo_sucursal, comuna_sucursal, region_sucursal, zona_sucursal, cod_producto, producto, marca, linea_producto, subcategoria, categoria, stock_cierre, unidades_recibidas, unidades_vendidas, stock_minimo, es_quiebre, id_carga
+- **`vw_kpi_inventario_mensual`:** anio_mes, registros, dias_quiebre, tasa_quiebre, stock_cierre_mes, unidades_vendidas_28d, dias_cobertura
+- **`agg_inventario_mes`:** anio_mes, cod_sucursal, sucursal, region, zona, categoria, registros, dias_quiebre, stock_cierre_mes, unidades_vendidas, unidades_vendidas_28d, unidades_recibidas, fecha_refresco
 
 ## Métricas oficiales (capa semántica)
 

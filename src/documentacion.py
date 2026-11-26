@@ -241,6 +241,11 @@ def generar_diccionario(esquema: dict, semantica: dict) -> None:
             l.append(f"| `{columna['nombre']}` | {columna['tipo']} | {meta.get('rol', '')} | "
                      f"{meta.get('descripcion', '')} | {', '.join(meta.get('sinonimos', []))} |")
         l.append("")
+    l += ["## Vistas de consumo", "",
+          "Las consultas de análisis y de IA se hacen sobre estas vistas y tablas agregadas.", ""]
+    l += [f"- **`{vista}`:** {', '.join(columnas)}"
+          for vista, columnas in semantica["columnas_de_vistas"].items()]
+    l.append("")
     l += ["## Métricas oficiales (capa semántica)", "",
           "| Métrica | Definición | Fuente | SQL | Sinónimos |", "|---|---|---|---|---|"]
     for nombre, m in semantica["metricas"].items():
