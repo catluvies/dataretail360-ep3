@@ -83,3 +83,35 @@ sola definición de cada KPI.
 El dashboard es la app de Streamlit (`app.py`). `docs/dashboard_bi.md` describe qué muestra, por qué
 está ordenado así y las cifras de control para revisarlo. El wireframe está en
 `docs/excalidraw/dashboard_bi_wireframe.png`, y los diagramas y fichas visuales de KPIs, en `docs/excalidraw/`.
+Las capturas del dashboard funcionando están en `docs/dashboard/`.
+
+## Consultas con IA
+
+`notebooks/EP5_validacion_ia.ipynb` tiene la prueba de consultas en lenguaje natural: seis preguntas
+de negocio hechas a una herramienta de IA, el SQL que entregó, su resultado sobre la capa Gold, la
+comparación con nuestra cifra de control y lo que encontramos al revisarlo. La herramienta recibe como
+contexto `docs/capa_semantica.json`.
+
+## Uso ético de los datos y de la IA
+
+Los datos del proyecto son de prueba: los crea `src/generar_fuentes.py` y no corresponden a personas
+reales. Aun así los tratamos como si lo fueran. El RUT de cada cliente se reemplaza por un seudónimo
+(un hash con una sal secreta, que se lee de una variable de entorno y no se sube al repositorio), y el
+nombre, el correo y el teléfono no llegan a la capa Gold, que es la que usan el dashboard y las
+consultas. Con la IA seguimos la misma idea: la herramienta solo recibió la capa semántica, que
+describe la estructura del modelo, y nunca filas de datos. El SQL que entregó se ejecutó en nuestro
+notebook, se pegó sin corregir para no esconder errores, y cada resultado se comparó con una cifra de
+control antes de usarlo. Dejamos anotado qué herramienta usamos, en qué fecha y qué salió mal en la
+prueba, porque una respuesta de la IA que nadie revisó no debería llegar a quien toma decisiones.
+
+## Referencias
+
+- Anthropic. (2026). *Claude Opus 5.5* [Modelo de lenguaje de gran tamaño]. https://claude.ai
+- Banco Central de Chile. (s. f.). *Política monetaria*. Recuperado el 26 de noviembre de 2026, de https://www.bcentral.cl/areas/politica-monetaria
+- Databricks. (s. f.). *What is medallion architecture?* Recuperado el 26 de noviembre de 2026, de https://www.databricks.com/glossary/medallion-architecture
+- Few, S. (2013). *Information dashboard design: Displaying data for at-a-glance monitoring* (2.ª ed.). Analytics Press.
+- Kimball, R., & Ross, M. (2013). *The data warehouse toolkit: The definitive guide to dimensional modeling* (3.ª ed.). Wiley.
+- Knaflic, C. N. (2015). *Storytelling with data: A data visualization guide for business professionals*. Wiley.
+- Plotly Technologies Inc. (s. f.). *Plotly open source graphing library for Python*. Recuperado el 26 de noviembre de 2026, de https://plotly.com/python/
+- Streamlit. (s. f.). *Streamlit documentation*. Recuperado el 26 de noviembre de 2026, de https://docs.streamlit.io/
+- World Wide Web Consortium. (2025). *Web Content Accessibility Guidelines (WCAG) 2.1*. https://www.w3.org/TR/WCAG21/
