@@ -25,6 +25,34 @@ en cada parte.
 | Productos en quiebre | Tabla con los productos que más días cerraron sin stock | Saber qué producto reponer y en qué sucursal |
 | Narrativa | Situación, complicación y acción recomendada | Dejar escrita la conclusión. Solo aparece sin filtros, porque habla de toda la empresa |
 
+## Cómo se ve
+
+Capturas del dashboard funcionando, con el período "1er semestre 2026". La página completa está en
+`dashboard/dashboard_completo.png`.
+
+**Filtros, tarjetas de KPI y venta por mes**
+
+![Filtros, tarjetas de KPI y venta por mes](dashboard/dashboard_1_kpis_y_ventas.png)
+
+**Quiebre de stock por mes y por sucursal**
+
+![Quiebre de stock por mes y por sucursal](dashboard/dashboard_2_quiebre.png)
+
+**Productos con más días en quiebre**
+
+![Tabla de productos con más días en quiebre](dashboard/dashboard_3_productos.png)
+
+**Narrativa**
+
+![Narrativa: situación, complicación y acción](dashboard/dashboard_4_narrativa.png)
+
+**Con el filtro de zona en "Norte"**
+
+Al elegir la zona Norte cambian las cuatro tarjetas y los gráficos: la venta neta queda en $406 MM y
+la tasa de quiebre sube a 10,08%, en alerta.
+
+![Dashboard con el filtro de zona en Norte](dashboard/dashboard_5_filtro_zona_norte.png)
+
 ## Por qué está ordenado así
 
 - **Orden.** Arriba va lo general y abajo el detalle: primero las tarjetas, después las tendencias,
